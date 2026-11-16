@@ -1,6 +1,6 @@
 """The CHEMKIN export of the snapshot use case: the generator's own logic and the build step's checks.
 
-Cantera is part of the backend CI environment, so one test loads a mechanism with the real strict ``ck2yaml`` and
+Cantera 3.2.0 is part of TCKDB's backend environment, so one test loads a mechanism with the real strict ``ck2yaml`` and
 checks k(300 K) and H298 as Cantera evaluates them. The other tests fake the loader where they test the generator's
 own logic, so that logic is also checked on its own. The build refuses a snapshot whose output does not show Cantera
 having loaded the files and agreeing with the records.

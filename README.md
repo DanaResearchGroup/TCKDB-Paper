@@ -4,7 +4,8 @@ Code that builds the TCKDB paper's demonstration snapshot and computes the numbe
 snapshot is made the way any user would make one: data is deposited into a TCKDB instance through its public routes,
 and the numbers are read back from that instance's database.
 
-TCKDB itself is the `tckdb/` git submodule, pinned to one commit (see `pins.toml`).
+TCKDB itself is the `tckdb/` git submodule, pinned to one commit (see `pins.toml`). The code in `snapshot/`,
+`tckdb_paper_generators/` and `tests/` came from TCKDB/TCKDB at commit 28c2c47, with its history.
 
 ## Layout
 
@@ -25,15 +26,26 @@ git clone --recurse-submodules https://github.com/DanaResearchGroup/TCKDB-Paper.
 cd TCKDB-Paper
 ```
 
-Use TCKDB's backend environment (`tckdb/backend/environment.yml`, with the `[dev]` extra of `tckdb/backend`). Cantera
-3.2.0 is part of it. A PostgreSQL server with the RDKit cartridge must be reachable; the image CI uses is
+Create TCKDB's backend environment and install the submodule's packages into it, the way CI does. Cantera 3.2.0 is
+part of the environment file.
+
+```bash
+conda env create -n tckdb_env -f tckdb/backend/environment.yml
+conda activate tckdb_env
+python -m pip install -e tckdb/schemas/python/tckdb-schemas
+python -m pip install -e "tckdb/backend[dev]"
+python -m pip install -e tckdb/clients/python
+```
+
+`snapshot/build.py` and `python -m tckdb_paper_generators.chemkin_export --check` stop if `app` (or
+`tckdb_client`, `tckdb_chemkin`, `tckdb_schemas`) is imported from outside `tckdb/`. A PostgreSQL server with the RDKit cartridge must be reachable; the image CI uses is
 `informaticsmatters/rdkit-cartridge-debian:Release_2025_03_3`.
 
 ## Run the tests
 
 ```bash
 export DB_USER=tckdb DB_PASSWORD=tckdb DB_HOST=127.0.0.1 DB_PORT=5432
-python -m pytest -n 2
+python -m pytest tests -n 2
 ```
 
 The tests create and drop their own `tckdb_test_*` databases.

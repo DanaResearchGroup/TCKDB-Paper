@@ -34,7 +34,7 @@ sources:
     levels: [b3lyp_d3bj, wb97xd, gfn2]
 
   # Source 4: the formic acid RMG model (Wu and Grinberg Dana, ACS Omega 2026), unmodified, through the CHEMKIN
-  # adapter. The files ship in this repository; the path is relative to the repository root.
+  # adapter. The files are in the tckdb/ submodule; the path is relative to this repository's root.
   chemkin_formic_acid:
     enabled: true
     fixture_dir: tckdb/backend/tests/integration/fixtures/rmg_formic_acid_wu2026

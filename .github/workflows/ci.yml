@@ -2,13 +2,8 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
-  workflow_dispatch:
-    inputs:
-      full_build:
-        description: "Run the full snapshot build (needs a self-hosted runner holding the four source trees)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -21,7 +16,7 @@ jobs:
 
     services:
       postgres:
-        image: informaticsmatters/rdkit-cartridge-debian:Release_2025_03_3
+        image: informaticsmatters/rdkit-cartridge-debian:Release_2025_03_3@sha256:96c34a5b88d0cbe02bf57290531f27f3cb97f5d3e494f03baea75ea99749b5ef
         env:
           POSTGRES_USER: tckdb
           POSTGRES_PASSWORD: tckdb
@@ -74,23 +69,4 @@ jobs:
           python -m pip install -e tckdb/clients/python
 
       - name: Unit tests
-        run: python -m pytest -n 2 -q
-
-  full-build:
-    name: Full snapshot build (self-hosted runner only)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_build }}
-    runs-on: [self-hosted, snapshot-sources]
-    timeout-minutes: 600
-
-    steps:
-      - name: Check out repository and the pinned TCKDB
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      # The build needs the E2 tree, the ARC run folders and the Arkane directory, which are not in this repository.
-      # See snapshot/README.md; this job is a placeholder until a runner holds them.
-      - name: Build
-        run: |
-          echo "Run snapshot/build.py as described in snapshot/README.md on a machine holding the source trees."
-          exit 1
+        run: python -m pytest tests -n 2 -q

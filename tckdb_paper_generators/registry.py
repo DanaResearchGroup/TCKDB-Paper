@@ -18,8 +18,7 @@ Adding a generator
 
 ``hessian_reanalysis``
 ----------------------
-The spectrum-from-Hessian agreement table (``3_results.md:44``,
-``SI.md:29``) is produced by
+The spectrum-from-Hessian agreement table is produced by
 :func:`app.services.hessian_reanalysis.hessian_reanalysis`, registered below
 through :mod:`tckdb_paper_generators.snapshot_generators`. It covers every calculation
 with a stored Hessian or a stored frequency list, ordered by content; a
@@ -39,16 +38,13 @@ GENERATORS: dict[str, Generator] = {
     "candidate_lineage": generators.candidate_lineage,
     "transition_state_evidence": generators.transition_state_evidence,
     "mechanism_fixture_provenance": generators.mechanism_fixture_provenance,
-    # The review-tier external-Cp-comparison demonstration.
-    "experimental_cp_comparison": generators.experimental_cp_comparison,
-    "thermoml_source_provenance": generators.thermoml_source_provenance,
     # A Psi4 Hessian through the
     # QCSchema adapter and back, and its Psi4-vs-Gaussian measurements. Reads
     # committed fixtures; the session only hosts a rolled-back round trip.
     "qcschema_interchange": generators.qcschema_interchange,
     # The spectrum-from-Hessian check: see the module docstring.
     "hessian_reanalysis": snapshot_generators.hessian_reanalysis,
-    # Demonstration snapshot (snapshot): see snapshot_generators for what each answers.
+    # Demonstration snapshot: see snapshot_generators for what each answers.
     "conformer_basins": snapshot_generators.conformer_basins,
     "calculation_evidence": snapshot_generators.calculation_evidence,
     "deposit_warnings": snapshot_generators.deposit_warnings,

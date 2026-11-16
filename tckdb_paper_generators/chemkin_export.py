@@ -666,6 +666,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", type=Path, required=True, help="directory of the files a build saved")
     args = parser.parse_args(argv)
+    import sys
+
+    import app
+
+    submodule = Path(__file__).resolve().parents[1] / "tckdb"
+    print(f"app imported from {app.__file__}", file=sys.stderr)
+    if submodule.resolve() not in Path(app.__file__).resolve().parents:
+        print(f"refused: app resolves outside the tckdb/ submodule ({submodule})", file=sys.stderr)
+        return 2
     with SessionLocal() as session:
         result = check_saved(session, args.check)
         session.rollback()

@@ -37,3 +37,11 @@ def test_package_versions_match_the_pinned_checkout():
         text = (ROOT / "tckdb" / relative).read_text()
         declared = re.search(r'^version\s*=\s*"([^"]+)"', text, flags=re.MULTILINE)
         assert declared and declared.group(1) == PINS["tckdb"]["packages"][name], name
+
+
+def test_the_postgres_image_is_pinned_by_digest_and_matches_tckdb_and_ci():
+    image = PINS["environment"]["postgres_image"]
+    assert "@sha256:" in image
+    assert image in (ROOT / "tckdb" / "docker-compose.yml").read_text()
+    assert image in (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert PINS["tckdb"]["image_digest"].startswith("sha256:")

@@ -23,5 +23,8 @@ _module = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = _module
 _spec.loader.exec_module(_module)
 
+# The error-body floors are sized for TCKDB's own suite; this suite sends no error bodies.
+_module.BODY_SWEEP_FLOORS.clear()
+
 # Pytest finds fixtures and hooks by name in this module's namespace.
 globals().update({name: value for name, value in vars(_module).items() if not name.startswith("__")})

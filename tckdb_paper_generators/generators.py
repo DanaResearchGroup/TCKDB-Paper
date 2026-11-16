@@ -14,7 +14,6 @@ comparison in the deposit round trip rather than by convention:
 from __future__ import annotations
 
 import hashlib
-import json
 import sys
 from collections import Counter
 from importlib import metadata
@@ -34,18 +33,15 @@ from app.db.models.calculation import (
 from app.db.models.common import (
     CalculationType,
     DatasetReleaseStatus,
-    ExternalSourceRecordKind,
     RecordReviewStatus,
     ReleaseSelectionAction,
     SubmissionRecordType,
 )
 from app.db.models.dataset_release import DatasetRelease, ReleaseSelection
-from app.db.models.external_source import ExternalSourceRecord
 from app.db.models.kinetics import Kinetics
 from app.db.models.level_of_theory import LevelOfTheory
 from app.db.models.network import Network
 from app.db.models.reaction import ChemReaction, ReactionEntry
-from app.db.models.record_machine_review import RecordMachineReviewRow
 from app.db.models.record_review import RecordReview
 from app.db.models.software import SoftwareRelease
 from app.db.models.species import Species, SpeciesEntry
@@ -53,14 +49,11 @@ from app.db.models.submission import Submission, SubmissionRecordLink
 from app.db.models.thermo import Thermo, ThermoSourceCalculation
 from app.db.models.transition_state import TransitionStateEntry
 from app.db.models.workflow import WorkflowToolRelease
-from app.services.external_comparison.cp import RUNNER as EXTERNAL_CP_COMPARISON_RUNNER
-from app.services.external_comparison.cp import latest_cp_comparison_for_thermo
-from app.services.machine_review.query import SCIENTIFIC_CHECK_PROVIDER
 from tckdb_paper_generators.snapshot_generators import content_key, equation
 
 #: The TCKDB checkout the generators run against: the one ``app`` is imported from.
 BACKEND_ROOT = Path(app.__file__).resolve().parents[1]
-REPO_ROOT = BACKEND_ROOT.parent
+TCKDB_ROOT = BACKEND_ROOT.parent
 #: The mechanism the paper deposits: the published formic acid model (Wu and Grinberg Dana 2026), unmodified.
 MECHANISM_FIXTURE_DIR = BACKEND_ROOT / "tests" / "integration" / "fixtures" / "rmg_formic_acid_wu2026"
 MECHANISM_FILE = "chem_annotated.inp"
@@ -71,7 +64,7 @@ MECHANISM_FIXTURE_FILES = (
     "RMG_input.txt",
     "PROVENANCE.md",
 )
-CHEMKIN_ADAPTER = REPO_ROOT / "clients" / "python" / "adapters" / "chemkin"
+CHEMKIN_ADAPTER = TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin"
 
 
 def _count(session: Session, model) -> int:
@@ -79,7 +72,7 @@ def _count(session: Session, model) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 4_limitations.md:7 -- corpus counts at snapshot
+# Corpus counts at snapshot
 # ---------------------------------------------------------------------------
 
 
@@ -125,7 +118,7 @@ def corpus_counts(session: Session) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 3_results.md:16 -- the fixture mechanism as the CHEMKIN round trip sees it
+# The fixture mechanism as the CHEMKIN round trip sees it
 # ---------------------------------------------------------------------------
 
 
@@ -214,7 +207,7 @@ def mechanism_roundtrip_counts(session: Session | None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 3_results.md:33 -- selected thermo per species (generalised from ethylene)
+# Selected thermo per species
 # ---------------------------------------------------------------------------
 
 
@@ -283,7 +276,7 @@ def selected_thermo_by_species(session: Session) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 3_results.md:35, SI.md:33 -- lineage of every multi-candidate species entry
+# Lineage of every multi-candidate species entry
 # ---------------------------------------------------------------------------
 
 
@@ -385,7 +378,7 @@ def candidate_lineage(session: Session) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 3_results.md:43 -- transition-state entries, imaginary modes, Hessians
+# Transition-state entries, imaginary modes, Hessians
 # ---------------------------------------------------------------------------
 
 
@@ -444,7 +437,7 @@ def transition_state_evidence(session: Session) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# SI.md:25 -- fixture mechanism provenance and the validating Cantera version
+# Fixture mechanism provenance and the validating Cantera version
 # ---------------------------------------------------------------------------
 
 
@@ -508,7 +501,7 @@ def mechanism_fixture_provenance(session: Session) -> dict[str, Any]:
         elif source:
             break
     return {
-        "fixture_directory": str(MECHANISM_FIXTURE_DIR.relative_to(REPO_ROOT)),
+        "fixture_directory": str(MECHANISM_FIXTURE_DIR.relative_to(TCKDB_ROOT)),
         "files": files,
         "publication": " ".join(source),
         "cantera_version": _distribution_version("cantera"),
@@ -516,130 +509,11 @@ def mechanism_fixture_provenance(session: Session) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Computed Cp against external ThermoML data
-# ---------------------------------------------------------------------------
-
-
-def experimental_cp_comparison(session: Session) -> dict[str, Any]:
-    """Latest ``external_cp_comparison`` review-tier row per thermo record.
-
-    ``record_machine_review`` is a private, append-only table with no public
-    ref of its own (``backend/docs/specs/record_machine_review_policy.md``), so this
-    reads it directly through the ORM the way every other generator reads its
-    tables, and renders only what a reader needs: the thermo and species it
-    is about (by public ref), the review's status and rubric version, and
-    every field of every per-observation finding -- decoded back out of the
-    finding's ``message`` (see ``app.services.external_comparison.cp``, whose
-    fixed :class:`~app.services.machine_review.schemas.MachineReviewFinding`
-    shape carries the full per-observation comparison as canonical JSON
-    there because it has no free-form numeric field of its own). No
-    accuracy threshold is applied here or anywhere upstream of it -- this
-    generator reports residuals, never a verdict on them.
-    """
-    # Discovery only: which thermo records have ever had a Cp-comparison row
-    # recorded. "Which one is current for a given thermo" is not decided
-    # here -- that is latest_cp_comparison_for_thermo's job, reading its own
-    # (scientific_check family, RUNNER) recipe, the same notion the
-    # currency classifier uses.
-    thermo_ids = sorted(
-        set(
-            session.scalars(
-                select(RecordMachineReviewRow.record_id).where(
-                    RecordMachineReviewRow.model == EXTERNAL_CP_COMPARISON_RUNNER,
-                    RecordMachineReviewRow.provider == SCIENTIFIC_CHECK_PROVIDER,
-                    RecordMachineReviewRow.record_type == SubmissionRecordType.thermo,
-                )
-            )
-        )
-    )
-
-    comparisons: list[dict[str, Any]] = []
-    for thermo_id in thermo_ids:
-        row = latest_cp_comparison_for_thermo(session, thermo_id)
-        if row is None:
-            continue
-        thermo = session.get(Thermo, thermo_id)
-        if thermo is None:
-            continue
-        species_entry = thermo.species_entry
-        findings = []
-        for raw_finding in row.findings_json:
-            detail = json.loads(raw_finding["message"])
-            findings.append({"severity": raw_finding["severity"], **detail})
-        findings.sort(key=lambda f: (f["temperature_k"], f["observation_ref"]))
-        comparisons.append(
-            {
-                "thermo_ref": thermo.public_ref,
-                "species_ref": species_entry.species.public_ref,
-                "species_entry_ref": species_entry.public_ref,
-                "species_smiles": species_entry.species.smiles,
-                "status": row.status.value,
-                "rubric": {"name": row.rubric_name, "version": row.rubric_version},
-                "reviewed_at": row.reviewed_at,
-                "findings": findings,
-                "finding_count": len(findings),
-            }
-        )
-    comparisons.sort(key=lambda c: (c["species_ref"], c["thermo_ref"]))
-    return {"comparisons": comparisons, "thermo_count": len(comparisons)}
-
-
-def _mapping_report_counts(mapping_report: dict[str, Any] | None) -> dict[str, Any]:
-    """Collapse a mapping report to counts: list/dict length, scalar as-is."""
-    if not mapping_report:
-        return {}
-    return {
-        key: (len(value) if isinstance(value, (list, dict)) else value)
-        for key, value in sorted(mapping_report.items())
-    }
-
-
-def thermoml_source_provenance(session: Session) -> dict[str, Any]:
-    """Every ThermoML article custody row: source, digest, parser/mapping versions.
-
-    One row per ``external_source_record`` of kind ``thermoml_article`` --
-    the custody chain an importer attaches
-    instead of the CCCBDB importer's flattened ``external_source_*``
-    columns. Reports the natural per-value ``source_record_key``, never the
-    row's internal id.
-    """
-    records = list(
-        session.scalars(
-            select(ExternalSourceRecord).where(
-                ExternalSourceRecord.record_kind == ExternalSourceRecordKind.thermoml_article
-            )
-        )
-    )
-    rows: list[dict[str, Any]] = []
-    for record in records:
-        source = record.external_source
-        rows.append(
-            {
-                "source_name": source.source_name,
-                "source_release": source.source_release,
-                "source_database_doi": source.source_database_doi,
-                "record_key": record.source_record_key,
-                "content_sha256": record.content_sha256,
-                "schema_id": record.schema_id,
-                "schema_valid": record.schema_valid,
-                "parser_name": record.parser_name,
-                "parser_version": record.parser_version,
-                "mapping_version": record.mapping_version,
-                "mapping_report_counts": _mapping_report_counts(record.mapping_report_json),
-            }
-        )
-    rows.sort(key=lambda r: r["record_key"])
-    return {"thermoml_source_records": rows, "record_count": len(rows)}
-
-
 __all__ = [
     "candidate_lineage",
     "corpus_counts",
-    "experimental_cp_comparison",
     "mechanism_fixture_provenance",
     "mechanism_roundtrip_counts",
     "selected_thermo_by_species",
-    "thermoml_source_provenance",
     "transition_state_evidence",
 ]

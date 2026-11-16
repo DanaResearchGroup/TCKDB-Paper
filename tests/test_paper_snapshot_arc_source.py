@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -33,9 +34,17 @@ def _run(root: Path, name: str, *, host: str, in_upload_file: bool = True) -> Pa
     return run
 
 
-def _config(tmp_path: Path, runs: list[str]) -> dict:
+def _git_checkout(path: Path) -> None:
+    git = ["git", "-C", str(path), "-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+
+
+def _config(tmp_path: Path, runs: list[str], *, git: bool = True) -> dict:
     adapter = tmp_path / "adapters"
     (adapter / "tckdb_arc" / "tckdb_arc").mkdir(parents=True)
+    if git:
+        _git_checkout(adapter)
     return {
         "adapter_command": ["python"],
         "adapter_path": str(adapter),
@@ -58,6 +67,21 @@ def test_a_run_file_naming_another_host_stops_the_build(source_arc, tmp_path):
     problems = source_arc.validate(_config(tmp_path, ["set/a"]))
     assert len(problems) == 1
     assert "names host 'other.example.org'" in problems[0]
+
+
+def test_an_adapter_without_a_recordable_commit_stops_the_build(source_arc, tmp_path):
+    _run(tmp_path / "runs", "set/a", host="recorded.example.org")
+    problems = source_arc.validate(_config(tmp_path, ["set/a"], git=False))
+    assert len(problems) == 1
+    assert "git checkout of tckdb-adapters" in problems[0]
+
+
+def test_the_adapter_commit_is_recorded(source_arc, tmp_path):
+    config = _config(tmp_path, [])
+    assert source_arc.adapter_versions(config)["tckdb_adapters_commit"] == source_arc.checkout_commit(
+        Path(config["adapter_path"])
+    )
+    assert source_arc.adapter_versions(config)["tckdb_adapters_commit"]
 
 
 def test_a_missing_output_and_a_repeated_run_are_problems(source_arc, tmp_path):

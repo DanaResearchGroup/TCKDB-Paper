@@ -1,7 +1,7 @@
 # Snapshot build
 
 One command rebuilds the demonstration snapshot on an empty local TCKDB instance. The snapshot is built
-from data we already have, deposited through the same public routes a contributor would use. It is not a hosted
+from four existing data sources, deposited through the same public routes a contributor would use. It is not a hosted
 instance, and the script is the deliverable, not the database. TCKDB itself is the `tckdb/` submodule; every TCKDB
 tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`, `verify_artifact_integrity.py`,
 `generate_expected_outputs.py`) runs from there.
@@ -34,7 +34,8 @@ tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`
     and `<work-dir>/arc_logs`, in a payload directory emptied before each run, so upload state an earlier upload left
     in a folder is never read. A digest of each folder's file list is taken before its run and checked after it; a
     change stops the build. The build also stops if the API key appears in the adapter's output or a sidecar.
-  - `snapshot_record.json` records the adapter's and ARC's commits and the adapter's declared versions.
+  - `build_report.json` records the adapter's and ARC's commits and the adapter's declared versions. The build refuses
+    to start unless `adapter_path` and `arc_path` are git checkouts, so both commits are always recorded.
 - **Source 3, N2H3 pressure-dependent network** (`source_pdep.py`): Keslin, Kaplan and Grinberg Dana, *Phys. Chem.
   Chem. Phys.* 2025, 27, 2680 (doi:10.1039/d4cp03837a), the Arkane run `Final_Final_CCSDT_F12_Aug_F12`.
   - Route: the PDep ingester (`tckdb/backend/scripts/pdep_ingestion`, `network_only=True`) builds one
@@ -58,9 +59,9 @@ tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`
 
 ## Run it
 
-Needs the TCKDB compose stack's Postgres (RDKit cartridge), an S3-compatible object store for job files, and a
-Python environment with TCKDB's backend requirements (`tckdb/backend/pyproject.toml`) and Cantera. The steps below
-and `sources.example.yml` agree: database `tckdb_dev`, API on port 8010, store at `localhost:9000`.
+Needs a Python environment set up as in the top-level `README.md`, a PostgreSQL server with the RDKit cartridge and an
+S3-compatible object store for job files; the `tckdb/` submodule's compose file starts both. The steps below and
+`sources.example.yml` agree: database `tckdb_dev`, API on port 8010, store at `localhost:9000`.
 
 ```bash
 git submodule update --init
@@ -86,9 +87,10 @@ python snapshot/build.py --sources my_sources.yml
 python snapshot/instance.py down --name a --drop
 ```
 
-An editable install can point at another TCKDB checkout. `build.py` and `instance.py` put the submodule's packages
-and this repository's root first on `PYTHONPATH`; `snapshot_record.json` says whether the imports came from the
-submodule.
+An editable install can point at another TCKDB checkout. `build.py` puts the submodule's packages and this
+repository's root first on its import path and on the `PYTHONPATH` of the processes it starts, and stops if `app`,
+`tckdb_client`, `tckdb_chemkin` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets the API
+process's `PYTHONPATH` the same way. `snapshot_record.json` records that the imports came from the submodule.
 
 ## What comes out
 
@@ -125,7 +127,7 @@ Generators run for the snapshot: `corpus_counts`, `conformer_basins`, `calculati
     k is compared with the hand evaluation of the written A, n and Ea. H298 of [CH3] from the polynomial is reported
     next to the record's scalar H298 (not gated) and next to Cantera's (gated).
   - The build refuses the snapshot unless Cantera loaded the files, the stored fit is in cm3 mol-1 s-1, all of those
-    agree, the 300 K ratio is within its bound, the files are written to at least today's precision (nine significant
+    agree, the 300 K ratio is within its bound, the files are written to at least the precision the exporter writes (nine significant
     digits of A, n and Ea and of the NASA coefficients' mantissas; more digits pass), and the manifest has no gaps.
     Without Cantera the output says `cantera_not_installed`, and the build refuses that.
 - `ch3_enthalpy_of_formation`: every [CH3] thermo record (H298, level, the deposit it came from) and the H298

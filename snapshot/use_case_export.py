@@ -160,7 +160,7 @@ def check_saved(directory: Path, env: dict[str, str]) -> dict[str, Any]:
     return result
 
 
-#: The least precision the exporter writes today; a build that finds fewer digits is refused, so the bounds computed from
+#: The least precision the exporter writes; a build that finds fewer digits is refused, so the bounds computed from
 #: the written digits cannot widen to let a coarser file through. More digits pass.
 #: Fixed-point fields (the NASA temperatures) are counted in decimal places, the E-notation ones (A, n, Ea, the NASA
 #: coefficients) in significant digits of the normalised mantissa, so ``0.0001E+07`` does not pass for a 9-digit A.
@@ -190,7 +190,7 @@ def _written_places(key: str, text: Any) -> int | None:
 
 
 def _rate_problems(rate: dict[str, Any]) -> list[str]:
-    """The forward rate must be evaluated, written to at least today's precision, parameter by parameter the stored
+    """The forward rate must be evaluated, written to at least the precision the exporter writes, parameter by parameter the stored
     fit's, Cantera's own evaluation of the written digits, and within what the written digits explain at 300 K."""
     if rate.get("cantera_k_forward") is None or rate.get("stored_fit_k") is None:
         return ["no forward rate coefficient was compared with the stored fit"]
@@ -240,7 +240,7 @@ def _h298_problems(h298: dict[str, Any]) -> list[str]:
 
 def _nasa_problems(row: dict[str, Any]) -> list[str]:
     """Every number written in a species' NASA card is the stored record's to within half a unit of its last written
-    place, and the coefficients are written to at least today's precision."""
+    place, and the coefficients are written to at least the precision the exporter writes."""
     check = row.get("nasa_vs_record")
     if not check:
         return [f"species {row.get('smiles')}: the NASA card was not compared with the stored record"]

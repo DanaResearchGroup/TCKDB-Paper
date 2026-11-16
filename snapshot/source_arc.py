@@ -60,21 +60,26 @@ def _pyproject_version(path: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def checkout_commit(path: Path) -> str | None:
+    """HEAD of the git checkout whose top level is ``path``; ``None`` for anything else (a source archive, a subfolder)."""
+    top = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != path.resolve():
+        return None
+    done = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"], capture_output=True, text=True)
+    return done.stdout.strip() or None
+
+
 def adapter_versions(cfg: dict[str, Any]) -> dict[str, Any]:
     """Versions the adapter checkout declares, and the commits of the adapter and ARC checkouts."""
-
-    def commit(path: Path) -> str | None:
-        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True)
-        return done.stdout.strip() or None
 
     adapter = Path(cfg["adapter_path"]).expanduser()
     found: dict[str, Any] = {
         "tckdb-arc": _pyproject_version(adapter / "tckdb_arc" / "pyproject.toml"),
         "tckdb-adapters-core": _pyproject_version(adapter / "tckdb_core" / "pyproject.toml"),
-        "tckdb_adapters_commit": commit(adapter),
+        "tckdb_adapters_commit": checkout_commit(adapter),
     }
     if cfg.get("arc_path"):
-        found["arc_commit"] = commit(Path(cfg["arc_path"]).expanduser())
+        found["arc_commit"] = checkout_commit(Path(cfg["arc_path"]).expanduser())
     return found
 
 
@@ -120,6 +125,10 @@ def validate(cfg: dict[str, Any]) -> list[str]:
     adapter = Path(str(cfg.get("adapter_path") or "")).expanduser()
     if not cfg.get("adapter_path") or not (adapter / "tckdb_arc" / "tckdb_arc").is_dir():
         problems.append(f"{SOURCE}: 'adapter_path' must be a tckdb-adapters checkout (tckdb_arc/tckdb_arc not found)")
+    elif checkout_commit(adapter) is None:
+        problems.append(f"{SOURCE}: 'adapter_path' must be a git checkout of tckdb-adapters, so its commit can be recorded")
+    if cfg.get("arc_path") and checkout_commit(Path(cfg["arc_path"]).expanduser()) is None:
+        problems.append(f"{SOURCE}: 'arc_path' must be a git checkout of ARC, so its commit can be recorded")
     root = Path(str(cfg.get("runs_root") or "")).expanduser()
     if not cfg.get("runs_root") or not root.is_dir():
         problems.append(f"{SOURCE}: 'runs_root' is required and must be a directory")

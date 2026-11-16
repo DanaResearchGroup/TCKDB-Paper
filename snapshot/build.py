@@ -76,8 +76,8 @@ EXPECTED_OUTPUTS = (
     "dataset_release",
 )
 
-#: Config keys holding local paths; omitted from ``snapshot_record.json``.
-PATH_KEYS = frozenset({"root", "fixture_dir", "adapter_path", "arc_path", "runs_root", "arkane_dir"})
+#: Config keys holding local paths or host names; omitted from ``snapshot_record.json``.
+PATH_KEYS = frozenset({"root", "fixture_dir", "adapter_path", "arc_path", "runs_root", "arkane_dir", "recorded_hosts"})
 TOP_LEVEL_KEYS = frozenset({"instance", "sources", "accounts", "expected_outputs", "curation", "chemkin_export"})
 
 #: Deposit order.
@@ -201,10 +201,6 @@ def package_versions() -> dict[str, Any]:
     Installed-distribution metadata can describe another checkout (an editable install made elsewhere), so the
     declared version comes from the files and the import location is checked separately.
     """
-    import tckdb_chemkin
-    import tckdb_client
-    import tckdb_schemas
-
     declared = {}
     for name, path in (
         ("tckdb-client", TCKDB_ROOT / "clients" / "python" / "pyproject.toml"),
@@ -213,10 +209,54 @@ def package_versions() -> dict[str, Any]:
     ):
         match = re.search(r'^version\s*=\s*"([^"]+)"', path.read_text(), flags=re.MULTILINE)
         declared[name] = match.group(1) if match else "unknown"
-    here = all(
-        TCKDB_ROOT in Path(module.__file__).resolve().parents for module in (tckdb_client, tckdb_chemkin, tckdb_schemas)
-    )
-    return {"declared_by_this_checkout": declared, "imported_from_this_checkout": here}
+    return {"declared_by_this_checkout": declared, "imported_from_this_checkout": not outside_checkout()}
+
+
+def outside_checkout() -> dict[str, str]:
+    """The TCKDB packages this process imported from outside the ``tckdb/`` submodule, by name."""
+    import app
+    import tckdb_chemkin
+    import tckdb_client
+    import tckdb_schemas
+
+    root = TCKDB_ROOT.resolve()
+    modules = {"app": app, "tckdb_chemkin": tckdb_chemkin, "tckdb_client": tckdb_client, "tckdb_schemas": tckdb_schemas}
+    return {
+        name: str(Path(module.__file__).resolve())
+        for name, module in modules.items()
+        if root not in Path(module.__file__).resolve().parents
+    }
+
+
+def public_options(entry: dict[str, Any]) -> dict[str, Any]:
+    """A source's options without local paths, host names or any URL."""
+    return {k: v for k, v in entry.items() if k not in PATH_KEYS and not _has_url(v)}
+
+
+def _has_url(value: Any) -> bool:
+    if isinstance(value, str):
+        return "://" in value
+    if isinstance(value, dict):
+        return any(_has_url(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_has_url(v) for v in value)
+    return False
+
+
+def private_values(config: dict[str, Any]) -> list[str]:
+    """The local paths and host names the sources file holds, which no output file may repeat."""
+    found: list[str] = []
+    for entry in (config.get("sources") or {}).values():
+        for key in PATH_KEYS:
+            value = (entry or {}).get(key)
+            found += [str(v) for v in (value if isinstance(value, list) else [value]) if v]
+    return found
+
+
+def leaks(texts: dict[str, str], config: dict[str, Any]) -> list[str]:
+    """Names of the output files that repeat a path or host name of the sources file."""
+    private = private_values(config)
+    return sorted(name for name, text in texts.items() if any(value in text for value in private))
 
 
 def source_records(config: dict[str, Any], report: Report) -> dict[str, Any]:
@@ -229,7 +269,7 @@ def source_records(config: dict[str, Any], report: Report) -> dict[str, Any]:
             continue
         records[name] = {
             "status": report.source(name)["status"],
-            "options": {k: v for k, v in entry.items() if k not in PATH_KEYS},
+            "options": public_options(entry),
             "input_files": module.describe_inputs(entry) if entry.get("enabled", True) else {},
         }
         if "literature" in report.source(name):
@@ -247,6 +287,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-nonempty", action="store_true", help="skip the empty-instance check (reruns only)")
     args = parser.parse_args(argv)
 
+    stray = outside_checkout()
+    if stray:
+        raise SystemExit(
+            "these packages resolve outside the tckdb/ submodule: "
+            + ", ".join(f"{name} ({path})" for name, path in sorted(stray.items()))
+            + "; install the submodule's packages (see README.md) or put them first on PYTHONPATH"
+        )
     config = load_config(args.sources)
     problems = validate_config(config)
     if problems:
@@ -357,7 +404,12 @@ def main(argv: list[str] | None = None) -> int:
         "built_at_unix": int(started),
         "wall_seconds": round(time.time() - started, 1),
     }
-    (out_dir / "snapshot_record.json").write_text(json.dumps(record, indent=2, sort_keys=True, default=str) + "\n")
+    record_text = json.dumps(record, indent=2, sort_keys=True, default=str) + "\n"
+    (out_dir / "snapshot_record.json").write_text(record_text)
+    published = {name: (out_dir / name).read_text() for name in ("build_report.json",) if (out_dir / name).is_file()}
+    leaked = leaks({**published, "snapshot_record.json": record_text}, config)
+    if leaked:
+        raise SystemExit(f"{', '.join(leaked)} repeat a local path or host name from the sources file; not publishable")
     print(f"done in {record['wall_seconds']} s; wrote {out_dir}")
     return 0
 
