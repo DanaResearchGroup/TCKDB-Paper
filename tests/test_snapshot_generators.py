@@ -1,4 +1,4 @@
-"""Generators added for the demonstration snapshot (``scripts/paper_snapshot``).
+"""Generators added for the demonstration snapshot (``snapshot``).
 
 Each is exercised on rows seeded through the test factories. They were also run
 against a full build of the snapshot;
@@ -19,7 +19,7 @@ from app.db.models.common import (
 )
 from app.db.models.deposit_warning import DepositWarning
 from app.services.deposit.expected_outputs import render_json
-from scripts.paper import snapshot_generators
+from tckdb_paper_generators import snapshot_generators
 from tests.services.scientific_read._factories import (
     attach_artifact,
     make_calculation,

@@ -1,4 +1,4 @@
-"""Generators for the worked cases of the demonstration snapshot (``scripts/paper_snapshot``).
+"""Generators for the worked cases of the demonstration snapshot (``snapshot``).
 
 * ``use_case_ch4_oh``: the computed rate coefficient of C + [OH] => O + [CH3], its transition state and k(300 K).
 * ``ch3_enthalpy_of_formation``: every thermo record of [CH3] and the H298 selection answer with a level filter.
@@ -47,13 +47,13 @@ from app.db.models.submission import Submission, SubmissionRecordLink
 from app.db.models.thermo import Thermo, ThermoNASA, ThermoSourceCalculation
 from app.db.models.transition_state import TransitionState, TransitionStateEntry
 from app.db.models.workflow import WorkflowToolRelease
-from scripts.paper.generators import (
+from tckdb_paper_generators.generators import (
     MECHANISM_FILE,
     MECHANISM_FIXTURE_DIR,
     _parse_fixture_mechanism,
     _standing_selections,
 )
-from scripts.paper.snapshot_generators import (
+from tckdb_paper_generators.snapshot_generators import (
     _level_label,
     _selection_session,
     _side,

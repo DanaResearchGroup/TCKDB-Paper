@@ -1,6 +1,6 @@
 """Read sample records back from an instance and check them against the sources.
 
-    python scripts/paper_snapshot/readback.py --api-url http://127.0.0.1:8103 --sources my_sources.yml
+    python snapshot/readback.py --api-url http://127.0.0.1:8103 --sources my_sources.yml
 
 One sample per configured source:
 
@@ -26,14 +26,15 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[1]
+REPO_ROOT = HERE.parent
+TCKDB_ROOT = REPO_ROOT / "tckdb"
 for _path in reversed(
     [
         HERE,
-        REPO_ROOT / "schemas" / "python" / "tckdb-schemas",
-        REPO_ROOT / "clients" / "python" / "src",
-        REPO_ROOT / "clients" / "python" / "adapters" / "chemkin",
-        REPO_ROOT / "backend",
+        TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
+        TCKDB_ROOT / "clients" / "python" / "src",
+        TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
+        TCKDB_ROOT / "backend",
     ]
 ):
     if str(_path) not in sys.path:
@@ -87,7 +88,7 @@ def check_chemkin(client, cfg: dict[str, Any]) -> dict[str, Any]:
     from tckdb_chemkin.identity import IdentityResolver, parse_species_dictionary
     from tckdb_chemkin.parser import parse_mechanism
 
-    fixture = Path(cfg.get("fixture_dir", "backend/tests/integration/fixtures/rmg_formic_acid_wu2026"))
+    fixture = Path(cfg.get("fixture_dir", "tckdb/backend/tests/integration/fixtures/rmg_formic_acid_wu2026"))
     fixture = fixture if fixture.is_absolute() else REPO_ROOT / fixture
     mechanism = parse_mechanism((fixture / cfg.get("mechanism_file", "chem_annotated.inp")).read_text())
     resolver = IdentityResolver(rmg_dict=parse_species_dictionary((fixture / "species_dictionary.txt").read_text()))

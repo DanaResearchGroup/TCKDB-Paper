@@ -15,7 +15,7 @@ import pytest
 from app.services.deposit_warnings import content_hash
 from app.services.release.manifest import manifest_digest as server_manifest_digest
 
-SNAPSHOT_DIR = Path(__file__).resolve().parents[3] / "scripts" / "paper_snapshot"
+SNAPSHOT_DIR = Path(__file__).resolve().parents[1] / "snapshot"
 
 
 @pytest.fixture(scope="module")

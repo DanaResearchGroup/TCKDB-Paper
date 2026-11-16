@@ -1,4 +1,4 @@
-"""Generators for the demonstration snapshot (``scripts/paper_snapshot``).
+"""Generators for the demonstration snapshot (``snapshot``).
 
 * ``hessian_reanalysis``: every calculation with a stored Hessian or frequency list; a missing Hessian is counted.
   Its ``summary`` gives stored Hessians of minima and of transition states, the largest frequency difference, and

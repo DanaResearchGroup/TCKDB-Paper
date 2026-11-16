@@ -1,4 +1,4 @@
-"""The worked-case generators of the demonstration snapshot (``scripts.paper.snapshot_cases``).
+"""The worked-case generators of the demonstration snapshot (``tckdb_paper_generators.snapshot_cases``).
 
 Each runs on rows seeded through the test factories. The tests pin the shape and the rules: subjects found by
 content, rows ordered by content, no database id, refs only as values, and the reconciliation arithmetic.
@@ -28,8 +28,8 @@ from app.services.deposit.expected_outputs import render_json
 from app.services.record_review import set_record_review_status
 from app.services.release.curation import add_selection, create_release, publish_release, resolve_curation_policy
 from app.services.release.manifest import freeze_manifest
-from scripts.paper import generators, snapshot_cases, snapshot_generators
-from tests.scripts.test_snapshot_generators import _no_integer_ids
+from tckdb_paper_generators import generators, snapshot_cases, snapshot_generators
+from test_snapshot_generators import _no_integer_ids
 from tests.services.release._attest import deposit_and_attest
 from tests.services.scientific_read._factories import (
     attach_freq_result,

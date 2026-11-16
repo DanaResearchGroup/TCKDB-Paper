@@ -17,14 +17,16 @@ import httpx
 from tckdb_client import TCKDBClient
 from tckdb_client.errors import TCKDBError, TCKDBHTTPError
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TCKDB_ROOT = REPO_ROOT / "tckdb"
 
 #: Package source roots, put first on the path so a checkout runs without an install.
 PACKAGE_ROOTS = (
-    REPO_ROOT / "schemas" / "python" / "tckdb-schemas",
-    REPO_ROOT / "clients" / "python" / "src",
-    REPO_ROOT / "clients" / "python" / "adapters" / "chemkin",
-    REPO_ROOT / "backend",
+    TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
+    TCKDB_ROOT / "clients" / "python" / "src",
+    TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
+    TCKDB_ROOT / "backend",
+    REPO_ROOT,
 )
 
 
@@ -200,6 +202,7 @@ def slug(text: str) -> str:
 __all__ = [
     "PACKAGE_ROOTS",
     "REPO_ROOT",
+    "TCKDB_ROOT",
     "Report",
     "Session",
     "TCKDBError",

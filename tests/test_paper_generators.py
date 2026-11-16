@@ -23,8 +23,8 @@ from app.services.deposit.expected_outputs import (
     render_markdown,
     write_expected_outputs,
 )
-from scripts.paper import generators
-from scripts.paper.registry import GENERATORS
+from tckdb_paper_generators import generators
+from tckdb_paper_generators.registry import GENERATORS
 from tests.services.scientific_read._factories import (
     attach_artifact,
     attach_thermo_source_calculation,

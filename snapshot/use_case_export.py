@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import curation
-from common import REPO_ROOT, Report
+from common import TCKDB_ROOT, Report
 
 DIRECTORY = "chemkin_export"
 REQUEST_FILE = "export_request.json"
@@ -55,7 +55,7 @@ def problems(config: dict[str, Any]) -> list[str]:
 
 def _release_problems(config: dict[str, Any], plan: dict[str, Any]) -> list[str]:
     """The generator finds its records from release ``RELEASE_TAG`` and the species ``NAMED_SPECIES``; the plan must agree."""
-    from scripts.paper.chemkin_export import NAMED_SPECIES, RELEASE_TAG, SELECTED_SPECIES
+    from tckdb_paper_generators.chemkin_export import NAMED_SPECIES, RELEASE_TAG, SELECTED_SPECIES
 
     out = []
     if sorted(plan.get("species") or []) != sorted(NAMED_SPECIES):
@@ -145,11 +145,11 @@ def export_use_case(
 
 
 def check_saved(directory: Path, env: dict[str, str]) -> dict[str, Any]:
-    """Run ``scripts.paper.chemkin_export --check`` against the database; raise unless the saved files match the
+    """Run ``tckdb_paper_generators.chemkin_export --check`` against the database; raise unless the saved files match the
     in-process export (byte for byte, refs included; the manifest without ``generated_at``)."""
     done = subprocess.run(
-        [sys.executable, "-m", "scripts.paper.chemkin_export", "--check", str(directory)],
-        cwd=REPO_ROOT / "backend", env=env, capture_output=True, text=True,
+        [sys.executable, "-m", "tckdb_paper_generators.chemkin_export", "--check", str(directory)],
+        cwd=TCKDB_ROOT / "backend", env=env, capture_output=True, text=True,
     )
     try:
         result = json.loads(done.stdout)
@@ -181,7 +181,7 @@ CANTERA_VS_HAND_RELATIVE = 1.0e-8
 
 def _written_places(key: str, text: Any) -> int | None:
     """Significant digits of the written ``text`` (A, n, Ea); ``None`` when it is not a number."""
-    from scripts.paper.chemkin_export import significant_digits
+    from tckdb_paper_generators.chemkin_export import significant_digits
 
     try:
         return significant_digits(text)
@@ -276,7 +276,7 @@ def verify_output(document: dict[str, Any]) -> list[str]:
     out += _h298_problems(document.get("ch3_h298") or {})
     if (document.get("manifest") or {}).get("gaps"):
         out.append(f"the manifest lists gaps: {document['manifest']['gaps']}")
-    from scripts.paper.chemkin_export import NAMED_SPECIES
+    from tckdb_paper_generators.chemkin_export import NAMED_SPECIES
 
     species = document.get("species") or []
     if not species:

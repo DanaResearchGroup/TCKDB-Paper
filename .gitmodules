@@ -1,0 +1,3 @@
+[submodule "tckdb"]
+	path = tckdb
+	url = https://github.com/TCKDB/TCKDB.git

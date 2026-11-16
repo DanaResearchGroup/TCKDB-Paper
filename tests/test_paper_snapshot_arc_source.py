@@ -1,4 +1,4 @@
-"""The ARC source of the snapshot build (``scripts/paper_snapshot/source_arc.py``): config checks and folder digests."""
+"""The ARC source of the snapshot build (``snapshot/source_arc.py``): config checks and folder digests."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SNAPSHOT_DIR = Path(__file__).resolve().parents[3] / "scripts" / "paper_snapshot"
+SNAPSHOT_DIR = Path(__file__).resolve().parents[1] / "snapshot"
 
 
 @pytest.fixture(scope="module")

@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx
 
-from common import REPO_ROOT, Report, Session
+from common import TCKDB_ROOT, Report, Session
 
 DEMONSTRATION = "Written by the paper-snapshot build script as a demonstration of the curation overlay; not an independent review."
 APPROVAL_SUMMARY = (
@@ -42,7 +42,7 @@ def create_curator(db_env: dict[str, str], username: str, password: str, email: 
     done = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "backend" / "scripts" / "bootstrap_admin.py"),
+            str(TCKDB_ROOT / "backend" / "scripts" / "bootstrap_admin.py"),
             "--username", username, "--email", email, "--full-name", full_name, "--role", "curator",
         ],
         env=env, check=True, capture_output=True, text=True,
@@ -286,7 +286,7 @@ def cut_release(curator: Curator, report: Report, cfg: dict[str, Any], env: dict
         selections.append({"record": selection["record"], "record_ref": ref, "selection": made})
     custody = subprocess.run(
         [sys.executable, "scripts/ops/verify_artifact_integrity.py", "--release", release["release_ref"]],
-        cwd=REPO_ROOT / "backend", env=env, capture_output=True, text=True,
+        cwd=TCKDB_ROOT / "backend", env=env, capture_output=True, text=True,
     )
     if custody.returncode != 0:
         raise RuntimeError(f"curation: artifact custody check failed ({custody.returncode}): {custody.stdout[-500:]}")

@@ -11,11 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import REPO_ROOT
+from common import TCKDB_ROOT
 
 
 def _run(argv: list[str], env: dict[str, str]) -> str:
-    done = subprocess.run(argv, cwd=REPO_ROOT / "backend", env=env, capture_output=True, text=True)
+    done = subprocess.run(argv, cwd=TCKDB_ROOT / "backend", env=env, capture_output=True, text=True)
     if done.returncode != 0:
         raise RuntimeError(f"{' '.join(argv)} failed ({done.returncode}):\n{done.stdout}\n{done.stderr}")
     return done.stdout
@@ -45,7 +45,7 @@ def expected_outputs(out_dir: Path, env: dict[str, str], only: list[str] | None 
         sys.executable,
         "scripts/ops/generate_expected_outputs.py",
         "--generators",
-        "scripts.paper.registry:GENERATORS",
+        "tckdb_paper_generators.registry:GENERATORS",
         "--output-dir",
         str(out_dir),
     ]

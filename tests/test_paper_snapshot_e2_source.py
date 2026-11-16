@@ -1,4 +1,4 @@
-"""The E2 source of the snapshot build (``scripts/paper_snapshot/source_e2.py``): declarations and job files."""
+"""The E2 source of the snapshot build (``snapshot/source_e2.py``): declarations and job files."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from tckdb_schemas.structure_declarations import ActualProtocolDeclaration
 
-SNAPSHOT_DIR = Path(__file__).resolve().parents[3] / "scripts" / "paper_snapshot"
+SNAPSHOT_DIR = Path(__file__).resolve().parents[1] / "snapshot"
 
 
 @pytest.fixture(scope="module")

@@ -37,7 +37,7 @@ sources:
   # adapter. The files ship in this repository; the path is relative to the repository root.
   chemkin_formic_acid:
     enabled: true
-    fixture_dir: backend/tests/integration/fixtures/rmg_formic_acid_wu2026
+    fixture_dir: tckdb/backend/tests/integration/fixtures/rmg_formic_acid_wu2026
     mechanism_file: chem_annotated.inp
     species_dictionary: species_dictionary.txt
     scientific_origin: estimated

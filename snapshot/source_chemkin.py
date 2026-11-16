@@ -58,7 +58,7 @@ class _Recorder:
 
 
 def _fixture(cfg: dict[str, Any]) -> Path:
-    fixture = Path(cfg.get("fixture_dir", "backend/tests/integration/fixtures/rmg_formic_acid_wu2026"))
+    fixture = Path(cfg.get("fixture_dir", "tckdb/backend/tests/integration/fixtures/rmg_formic_acid_wu2026"))
     return fixture if fixture.is_absolute() else REPO_ROOT / fixture
 
 

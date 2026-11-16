@@ -1,6 +1,6 @@
 """Build the demonstration snapshot on an empty local TCKDB instance.
 
-    python scripts/paper_snapshot/build.py --sources scripts/paper_snapshot/sources.example.yml
+    python snapshot/build.py --sources snapshot/sources.example.yml
 
 Steps:
 
@@ -27,12 +27,14 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[1]
+REPO_ROOT = HERE.parent
+TCKDB_ROOT = REPO_ROOT / "tckdb"
 PACKAGE_PATHS = [
-    REPO_ROOT / "schemas" / "python" / "tckdb-schemas",
-    REPO_ROOT / "clients" / "python" / "src",
-    REPO_ROOT / "clients" / "python" / "adapters" / "chemkin",
-    REPO_ROOT / "backend",
+    TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
+    TCKDB_ROOT / "clients" / "python" / "src",
+    TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
+    TCKDB_ROOT / "backend",
+    REPO_ROOT,
 ]
 # This checkout's packages come first on the path.
 for _path in reversed([HERE, *PACKAGE_PATHS]):
@@ -96,7 +98,7 @@ def load_config(path: Path) -> dict[str, Any]:
 
 def registered_generators() -> set[str]:
     """Generator names in the registry, read as text."""
-    text = (REPO_ROOT / "backend" / "scripts" / "paper" / "registry.py").read_text()
+    text = (REPO_ROOT / "tckdb_paper_generators" / "registry.py").read_text()
     return set(re.findall(r'^\s+"([a-z0-9_]+)":\s', text, flags=re.MULTILINE))
 
 
@@ -186,7 +188,11 @@ def git_commit() -> dict[str, Any]:
     def run(*argv: str) -> str:
         return subprocess.run(["git", *argv], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
 
-    return {"commit": run("rev-parse", "HEAD"), "dirty_tracked_files": len(run("status", "--porcelain", "--untracked-files=no").splitlines())}
+    return {
+        "commit": run("rev-parse", "HEAD"),
+        "dirty_tracked_files": len(run("status", "--porcelain", "--untracked-files=no").splitlines()),
+        "tckdb_commit": run("-C", "tckdb", "rev-parse", "HEAD"),
+    }
 
 
 def package_versions() -> dict[str, Any]:
@@ -201,14 +207,14 @@ def package_versions() -> dict[str, Any]:
 
     declared = {}
     for name, path in (
-        ("tckdb-client", REPO_ROOT / "clients" / "python" / "pyproject.toml"),
-        ("tckdb-chemkin", REPO_ROOT / "clients" / "python" / "adapters" / "chemkin" / "pyproject.toml"),
-        ("tckdb-schemas", REPO_ROOT / "schemas" / "python" / "tckdb-schemas" / "pyproject.toml"),
+        ("tckdb-client", TCKDB_ROOT / "clients" / "python" / "pyproject.toml"),
+        ("tckdb-chemkin", TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin" / "pyproject.toml"),
+        ("tckdb-schemas", TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas" / "pyproject.toml"),
     ):
         match = re.search(r'^version\s*=\s*"([^"]+)"', path.read_text(), flags=re.MULTILINE)
         declared[name] = match.group(1) if match else "unknown"
     here = all(
-        REPO_ROOT in Path(module.__file__).resolve().parents for module in (tckdb_client, tckdb_chemkin, tckdb_schemas)
+        TCKDB_ROOT in Path(module.__file__).resolve().parents for module in (tckdb_client, tckdb_chemkin, tckdb_schemas)
     )
     return {"declared_by_this_checkout": declared, "imported_from_this_checkout": here}
 

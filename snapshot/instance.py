@@ -3,9 +3,9 @@
 An instance is a database (``tckdb_test_snapshot_<name>``), a bucket (``tckdb-test-snapshot-<name>``) and an API process
 on a local port. ``down --drop`` refuses names without the ``tckdb_test_`` prefix.
 
-    python scripts/paper_snapshot/instance.py up --name a --port 8101
-    python scripts/paper_snapshot/instance.py down --name a [--drop]
-    python scripts/paper_snapshot/instance.py restore --name c --archive snapshot/tckdb.archive
+    python snapshot/instance.py up --name a --port 8101
+    python snapshot/instance.py down --name a [--drop]
+    python snapshot/instance.py restore --name c --archive snapshot/tckdb.archive
 
 Needs Postgres (``docker compose up -d db``) and an S3-compatible store at ``S3_ENDPOINT_URL`` (default
 ``http://localhost:9000``, credentials ``S3_ACCESS_KEY`` / ``S3_SECRET_KEY``). Process state lives under ``--work-dir``.
@@ -23,12 +23,13 @@ import time
 import urllib.request
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-BACKEND = REPO_ROOT / "backend"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TCKDB_ROOT = REPO_ROOT / "tckdb"
+BACKEND = TCKDB_ROOT / "backend"
 PACKAGE_PATHS = [
-    REPO_ROOT / "schemas" / "python" / "tckdb-schemas",
-    REPO_ROOT / "clients" / "python" / "src",
-    REPO_ROOT / "clients" / "python" / "adapters" / "chemkin",
+    TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
+    TCKDB_ROOT / "clients" / "python" / "src",
+    TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
     BACKEND,
 ]
 

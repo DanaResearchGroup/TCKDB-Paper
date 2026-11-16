@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+import app
 from app.db.models.calculation import (
     Calculation,
     CalculationArtifact,
@@ -55,9 +56,10 @@ from app.db.models.workflow import WorkflowToolRelease
 from app.services.external_comparison.cp import RUNNER as EXTERNAL_CP_COMPARISON_RUNNER
 from app.services.external_comparison.cp import latest_cp_comparison_for_thermo
 from app.services.machine_review.query import SCIENTIFIC_CHECK_PROVIDER
-from scripts.paper.snapshot_generators import content_key, equation
+from tckdb_paper_generators.snapshot_generators import content_key, equation
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+#: The TCKDB checkout the generators run against: the one ``app`` is imported from.
+BACKEND_ROOT = Path(app.__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_ROOT.parent
 #: The mechanism the paper deposits: the published formic acid model (Wu and Grinberg Dana 2026), unmodified.
 MECHANISM_FIXTURE_DIR = BACKEND_ROOT / "tests" / "integration" / "fixtures" / "rmg_formic_acid_wu2026"
@@ -476,9 +478,11 @@ def qcschema_interchange(session: Session) -> dict[str, Any]:
     a live instance. ``session`` only lends a connection: the round trip
     writes inside a SAVEPOINT that is rolled back before this returns, so the
     database it runs against -- a restored deposit's included -- is left as
-    it was. Needs ``qcelemental`` (the backend's ``[dev]`` extra).
+    it was. The report omits the checkout commit, which a byte comparison from
+    another checkout could not reproduce. Needs ``qcelemental`` (the backend's
+    ``[dev]`` extra).
     """
-    return _qcschema_interchange_module().paper_generator(session)
+    return _qcschema_interchange_module().build_report(session, include_commit=False)
 
 
 def _distribution_version(name: str) -> str | None:

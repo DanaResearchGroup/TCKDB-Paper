@@ -1,4 +1,4 @@
-"""Generator for the CHEMKIN export of the CH4 + OH use case (``scripts/paper_snapshot``).
+"""Generator for the CHEMKIN export of the CH4 + OH use case (``snapshot``).
 
 * ``use_case_chemkin_export``: the CHEMKIN export of C + [OH] <=> O + [CH3], made in-process by the route's own
   function from the database alone. The request is found from release ``RELEASE_TAG`` (the rate record, and the [CH3]
@@ -7,7 +7,7 @@
   k(300 K) of the forward reaction as Cantera evaluates it from the exported file next to the stored fit's k(300 K),
   and H298 of [CH3] from the exported NASA polynomial next to the named record's H298.
 
-``python -m scripts.paper.chemkin_export --check DIR`` makes the same export and compares it with the files a build saved
+``python -m tckdb_paper_generators.chemkin_export --check DIR`` makes the same export and compares it with the files a build saved
 from ``POST /scientific/export/chemkin`` (byte for byte; ``manifest.json`` without its ``generated_at``).
 
 Public refs and the manifest's ``generated_at`` change from build to build, so the file digests in the output are
@@ -42,8 +42,8 @@ from app.db.models.kinetics import Kinetics
 from app.db.models.species import Species, SpeciesEntry
 from app.db.models.submission import SubmissionRecordLink
 from app.db.models.thermo import Thermo
-from scripts.paper.generators import _standing_selections
-from scripts.paper.snapshot_cases import (
+from tckdb_paper_generators.generators import _standing_selections
+from tckdb_paper_generators.snapshot_cases import (
     H298_TEMPERATURE_K,
     USE_CASE_PRODUCTS,
     USE_CASE_REACTANTS,

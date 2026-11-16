@@ -9,7 +9,7 @@ are in
 
 Adding a generator
 ------------------
-1. Write ``def <name>(session: Session) -> dict`` in :mod:`scripts.paper.generators`
+1. Write ``def <name>(session: Session) -> dict`` in :mod:`tckdb_paper_generators.generators`
    (or a sibling module). Order every collection by content, never by public
    ref or database id. Emit no ``datetime.now()``-derived value and no deposit
    timestamp.
@@ -21,7 +21,7 @@ Adding a generator
 The spectrum-from-Hessian agreement table (``3_results.md:44``,
 ``SI.md:29``) is produced by
 :func:`app.services.hessian_reanalysis.hessian_reanalysis`, registered below
-through :mod:`scripts.paper.snapshot_generators`. It covers every calculation
+through :mod:`tckdb_paper_generators.snapshot_generators`. It covers every calculation
 with a stored Hessian or a stored frequency list, ordered by content; a
 calculation whose Hessian cannot be reanalysed is counted under its refusal
 status, not dropped.
@@ -30,7 +30,7 @@ status, not dropped.
 from __future__ import annotations
 
 from app.services.deposit.expected_outputs import Generator
-from scripts.paper import chemkin_export, generators, snapshot_cases, snapshot_generators
+from tckdb_paper_generators import chemkin_export, generators, snapshot_cases, snapshot_generators
 
 GENERATORS: dict[str, Generator] = {
     "corpus_counts": generators.corpus_counts,
@@ -48,7 +48,7 @@ GENERATORS: dict[str, Generator] = {
     "qcschema_interchange": generators.qcschema_interchange,
     # The spectrum-from-Hessian check: see the module docstring.
     "hessian_reanalysis": snapshot_generators.hessian_reanalysis,
-    # Demonstration snapshot (scripts/paper_snapshot): see snapshot_generators for what each answers.
+    # Demonstration snapshot (snapshot): see snapshot_generators for what each answers.
     "conformer_basins": snapshot_generators.conformer_basins,
     "calculation_evidence": snapshot_generators.calculation_evidence,
     "deposit_warnings": snapshot_generators.deposit_warnings,

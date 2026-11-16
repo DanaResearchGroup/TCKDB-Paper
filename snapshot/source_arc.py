@@ -41,7 +41,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from common import REPO_ROOT, Report, Session, digest_files
+from common import TCKDB_ROOT, Report, Session, digest_files
 
 SOURCE = "arc_runs"
 HERE = Path(__file__).resolve().parent
@@ -164,8 +164,8 @@ def _environment(cfg: dict[str, Any], key: str) -> dict[str, str]:
     paths = [
         adapter / "tckdb_core",
         adapter / "tckdb_arc",
-        REPO_ROOT / "schemas" / "python" / "tckdb-schemas",
-        REPO_ROOT / "clients" / "python" / "src",
+        TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
+        TCKDB_ROOT / "clients" / "python" / "src",
     ]
     if cfg.get("arc_path"):
         paths.append(Path(cfg["arc_path"]).expanduser())

@@ -64,8 +64,8 @@ port 8010, store at `localhost:9000`.
 docker compose up -d db seaweedfs          # or any S3-compatible store at S3_ENDPOINT_URL
 make up                                    # migrations on tckdb_dev (an empty instance)
 RATE_LIMIT_ENABLED=false make api          # in a second terminal
-cp scripts/paper_snapshot/sources.example.yml my_sources.yml   # set the E2 root
-python scripts/paper_snapshot/build.py --sources my_sources.yml --out-dir snapshot_out
+cp snapshot/sources.example.yml my_sources.yml   # set the E2 root
+python snapshot/build.py --sources my_sources.yml --out-dir snapshot_out
 ```
 
 The build refuses a non-empty instance, and checks the whole sources file (every enabled source, stubs included)
@@ -76,9 +76,9 @@ otherwise spend the per-minute budget.
 `tckdb-test-snapshot-<name>`, an API on a local port). Point `instance`, `database` and `s3` in your sources file at it:
 
 ```bash
-python scripts/paper_snapshot/instance.py up --name a --port 8101
-python scripts/paper_snapshot/build.py --sources my_sources.yml
-python scripts/paper_snapshot/instance.py down --name a --drop
+python snapshot/instance.py up --name a --port 8101
+python snapshot/build.py --sources my_sources.yml
+python snapshot/instance.py down --name a --drop
 ```
 
 When you run from a git worktree, an editable install can point at another checkout. `build.py` and `instance.py`
@@ -90,7 +90,7 @@ In `--out-dir`:
 
 - `tckdb.archive`: the whole instance, from `backend/scripts/tckdb_archive.py`. Job files travel as blobs.
 - `expected_outputs/<name>.json` and `.md`: the paper's numbers, from `backend/scripts/ops/generate_expected_outputs.py`
-  (the generators registered in `backend/scripts/paper/registry.py`).
+  (the generators registered in `tckdb_paper_generators/registry.py`).
 - `build_report.json`: per source what was deposited, and every refusal and warning grouped by code.
 - `snapshot_record.json`: source commit, package versions, the approval statement, archive digest, and per source
   its options and a count and digest of the files it read. No path on the builder's machine is written to it.
@@ -193,12 +193,12 @@ cd backend && python -m scripts.paper.chemkin_export --check ../snapshot_out/che
 
 ```bash
 # Two builds from empty instances: same content?
-python scripts/paper_snapshot/compare.py build_one_out build_two_out
+python snapshot/compare.py build_one_out build_two_out
 
 # Restore the archive into a third empty instance and read samples back, including a job file by digest
-python scripts/paper_snapshot/instance.py up --name c --port 8103
-python scripts/paper_snapshot/instance.py restore --name c --archive snapshot_out/tckdb.archive
-python scripts/paper_snapshot/readback.py --api-url http://127.0.0.1:8103 --sources my_sources.yml
+python snapshot/instance.py up --name c --port 8103
+python snapshot/instance.py restore --name c --archive snapshot_out/tckdb.archive
+python snapshot/readback.py --api-url http://127.0.0.1:8103 --sources my_sources.yml
 ```
 
 `compare.py` does not expect identical bytes: public refs are random and timestamps differ. It masks public refs in

@@ -1,6 +1,6 @@
 """Compare two snapshot builds.
 
-    python scripts/paper_snapshot/compare.py <build-one-dir> <build-two-dir>
+    python snapshot/compare.py <build-one-dir> <build-two-dir>
 
 Each directory is a ``build.py`` output. Compared:
 

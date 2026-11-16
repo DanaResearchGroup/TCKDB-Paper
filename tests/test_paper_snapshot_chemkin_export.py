@@ -24,9 +24,9 @@ from app.db.models.common import AppUserRole, ArrheniusAUnits, PhaseKind, Record
 from app.services.deposit.expected_outputs import render_json
 from app.services.record_review import set_record_review_status
 from app.services.release.curation import add_selection, create_release, publish_release, resolve_curation_policy
-from scripts.paper import chemkin_export
-from scripts.paper.registry import GENERATORS
-from tests.scripts.test_snapshot_generators import _no_integer_ids
+from tckdb_paper_generators import chemkin_export
+from tckdb_paper_generators.registry import GENERATORS
+from test_snapshot_generators import _no_integer_ids
 from tests.services.release._attest import deposit_and_attest
 from tests.services.scientific_read._factories import (
     attach_thermo_nasa,
@@ -38,7 +38,7 @@ from tests.services.scientific_read._factories import (
     make_thermo_scalar,
 )
 
-SNAPSHOT_DIR = Path(__file__).resolve().parents[3] / "scripts" / "paper_snapshot"
+SNAPSHOT_DIR = Path(__file__).resolve().parents[1] / "snapshot"
 
 
 def _ref(prefix: str, letter: str) -> str:
