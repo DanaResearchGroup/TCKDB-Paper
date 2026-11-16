@@ -1,0 +1,28 @@
+# Versions this repository builds and tests against. The TCKDB source itself is the `tckdb/` submodule.
+
+[tckdb]
+repository = "https://github.com/TCKDB/TCKDB.git"
+commit = "28c2c4702908f0c6022604b76d1a9e7302cfae14"
+image = "laxzal/tckdb-api:sha-28c2c4702908f0c6022604b76d1a9e7302cfae14"
+image_digest = "sha256:68d27cccfc4616f61c9ce499d4e072705e74506a2460ac16f4014a6d6db15727"
+
+# Package versions declared by the pinned TCKDB commit.
+[tckdb.packages]
+tckdb-client = "0.208.2"
+tckdb-chemkin = "0.7.3"
+tckdb-schemas = "0.175.2"
+
+# Used by the ARC source of the snapshot build (not needed for the unit tests).
+[tckdb_adapters]
+repository = "https://github.com/calvinp0/tckdb-adapters.git"
+commit = "63ca2c38702fd74656eca48615e5ce9915c44cc4"
+tckdb-arc = "0.15.7"
+tckdb-core = "0.5.7"
+
+[arc]
+repository = "https://github.com/ReactionMechanismGenerator/ARC.git"
+commit = "a7c2666b19a9c0fa36309874bf9ddd55ff53ecd3"
+
+[environment]
+cantera = "3.2.0"
+postgres_image = "informaticsmatters/rdkit-cartridge-debian:Release_2025_03_3@sha256:96c34a5b88d0cbe02bf57290531f27f3cb97f5d3e494f03baea75ea99749b5ef"
