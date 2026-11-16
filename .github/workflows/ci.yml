@@ -74,7 +74,7 @@ jobs:
           python -m pip install -e tckdb/clients/python
 
       - name: Unit tests
-        run: python -m pytest tests -n 2 -q
+        run: python -m pytest -n 2 -q
 
   full-build:
     name: Full snapshot build (self-hosted runner only)

@@ -33,7 +33,7 @@ Use TCKDB's backend environment (`tckdb/backend/environment.yml`, with the `[dev
 
 ```bash
 export DB_USER=tckdb DB_PASSWORD=tckdb DB_HOST=127.0.0.1 DB_PORT=5432
-python -m pytest tests -n 2
+python -m pytest -n 2
 ```
 
 The tests create and drop their own `tckdb_test_*` databases.
