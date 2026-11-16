@@ -5,6 +5,9 @@ repository = "https://github.com/TCKDB/TCKDB.git"
 commit = "bd53cfc6b870cd623c0a69e6a15d8a731d9ef962"
 tag = "v0.2.0"
 image = "laxzal/tckdb-api:sha-bd53cfc6b870cd623c0a69e6a15d8a731d9ef962"
+image_digest = "sha256:74637d4ef23d150f468209831a9c1b02e8d7b718d24420de4e6663f569bb07f2"
+image_version_tag = "laxzal/tckdb-api:0.2.0"
+image_version_tag_digest = "sha256:74637d4ef23d150f468209831a9c1b02e8d7b718d24420de4e6663f569bb07f2"
 
 # Package versions declared by the pinned TCKDB commit.
 [tckdb.packages]
