@@ -1,8 +1,10 @@
-# Paper snapshot build
+# Snapshot build
 
-One command rebuilds the paper's demonstration snapshot on an empty local TCKDB instance. The snapshot is built
+One command rebuilds the demonstration snapshot on an empty local TCKDB instance. The snapshot is built
 from data we already have, deposited through the same public routes a contributor would use. It is not a hosted
-instance, and the script is the deliverable, not the database.
+instance, and the script is the deliverable, not the database. TCKDB itself is the `tckdb/` submodule; every TCKDB
+tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`, `verify_artifact_integrity.py`,
+`generate_expected_outputs.py`) runs from there.
 
 ## What it deposits
 
@@ -35,7 +37,7 @@ instance, and the script is the deliverable, not the database.
   - `snapshot_record.json` records the adapter's and ARC's commits and the adapter's declared versions.
 - **Source 3, N2H3 pressure-dependent network** (`source_pdep.py`): Keslin, Kaplan and Grinberg Dana, *Phys. Chem.
   Chem. Phys.* 2025, 27, 2680 (doi:10.1039/d4cp03837a), the Arkane run `Final_Final_CCSDT_F12_Aug_F12`.
-  - Route: the PDep ingester (`backend/scripts/pdep_ingestion`, `network_only=True`) builds one
+  - Route: the PDep ingester (`tckdb/backend/scripts/pdep_ingestion`, `network_only=True`) builds one
     `NetworkPDepUploadRequest` from `input.py`, `output.py` and `supporting_information.csv`, posted to
     `/uploads/networks/pdep` with the paper as its `literature`.
   - Deposited: 11 species, 5 transition states with geometry (TS7 has none in the run and enters only its
@@ -48,22 +50,25 @@ instance, and the script is the deliverable, not the database.
     title carries subscript markup).
 - **Source 4, formic acid pyrolysis and oxidation model** (`source_chemkin.py`): Wu and Grinberg Dana,
   *ACS Omega* 2026, 11, 6371 (CC BY 4.0), 123 species and 3002 reactions, deposited unmodified.
-  - Route: the CHEMKIN adapter (`clients/python/adapters/chemkin`), which posts to `/uploads/thermo` and
+  - Route: the CHEMKIN adapter (`tckdb/clients/python/adapters/chemkin`), which posts to `/uploads/thermo` and
     `/uploads/kinetics`.
-  - Where to get it: the files are in this repository, `backend/tests/integration/fixtures/rmg_formic_acid_wu2026/`.
+  - Where to get it: the files are in the submodule, `tckdb/backend/tests/integration/fixtures/rmg_formic_acid_wu2026/`.
   - The adapter's own import warnings (wrong `DUPLICATE` flags) are kept in the report; the importer never
     repairs them.
 
 ## Run it
 
-Needs the compose stack's Postgres (RDKit cartridge), an S3-compatible object store for job files, and the
-`tckdb_env` conda environment. The steps below and `sources.example.yml` agree: database `tckdb_dev`, API on
-port 8010, store at `localhost:9000`.
+Needs the TCKDB compose stack's Postgres (RDKit cartridge), an S3-compatible object store for job files, and a
+Python environment with TCKDB's backend requirements (`tckdb/backend/pyproject.toml`) and Cantera. The steps below
+and `sources.example.yml` agree: database `tckdb_dev`, API on port 8010, store at `localhost:9000`.
 
 ```bash
+git submodule update --init
+cd tckdb
 docker compose up -d db seaweedfs          # or any S3-compatible store at S3_ENDPOINT_URL
 make up                                    # migrations on tckdb_dev (an empty instance)
 RATE_LIMIT_ENABLED=false make api          # in a second terminal
+cd ..
 cp snapshot/sources.example.yml my_sources.yml   # set the E2 root
 python snapshot/build.py --sources my_sources.yml --out-dir snapshot_out
 ```
@@ -81,18 +86,20 @@ python snapshot/build.py --sources my_sources.yml
 python snapshot/instance.py down --name a --drop
 ```
 
-When you run from a git worktree, an editable install can point at another checkout. `build.py` and `instance.py`
-put this checkout's packages first on `PYTHONPATH`; `snapshot_record.json` says whether the imports came from here.
+An editable install can point at another TCKDB checkout. `build.py` and `instance.py` put the submodule's packages
+and this repository's root first on `PYTHONPATH`; `snapshot_record.json` says whether the imports came from the
+submodule.
 
 ## What comes out
 
 In `--out-dir`:
 
-- `tckdb.archive`: the whole instance, from `backend/scripts/tckdb_archive.py`. Job files travel as blobs.
-- `expected_outputs/<name>.json` and `.md`: the paper's numbers, from `backend/scripts/ops/generate_expected_outputs.py`
-  (the generators registered in `tckdb_paper_generators/registry.py`).
+- `tckdb.archive`: the whole instance, from `tckdb/backend/scripts/tckdb_archive.py`. Job files travel as blobs.
+- `expected_outputs/<name>.json` and `.md`: the paper's numbers, from `tckdb/backend/scripts/ops/generate_expected_outputs.py`
+  run as `--generators tckdb_paper_generators.registry:GENERATORS` (the generators registered in
+  `tckdb_paper_generators/registry.py`).
 - `build_report.json`: per source what was deposited, and every refusal and warning grouped by code.
-- `snapshot_record.json`: source commit, package versions, the approval statement, archive digest, and per source
+- `snapshot_record.json`: source commit (this repository's and the submodule's), package versions, the approval statement, archive digest, and per source
   its options and a count and digest of the files it read. No path on the builder's machine is written to it.
 
 Generators run for the snapshot: `corpus_counts`, `conformer_basins`, `calculation_evidence`, `deposit_warnings`,
@@ -147,7 +154,7 @@ record, can change that row and nothing else.
 ## Curation is a demonstration
 
 After the deposits, the build creates a curator account with the operator CLI
-(`backend/scripts/bootstrap_admin.py --role curator`; no public route grants that role). Everything below goes through
+(`tckdb/backend/scripts/bootstrap_admin.py --role curator`; no public route grants that role). Everything below goes through
 the public curator routes as that account, never as the depositor, and every summary, note and rationale it writes says
 the build script wrote it for a demonstration and that it is not an independent review. The plan is the `curation`
 block of the sources file.
@@ -161,10 +168,10 @@ block of the sources file.
     records approved, record by record (`PATCH /record-reviews/{record_type}/{record_id}`). The grain is the record: the
     run's species records are sound, and approving its submission would approve every record it holds, so the
     submission itself stays unapproved.
-- **One dataset release** (`curation.release`), following `backend/docs/deployment/cutting_a_dataset_release.md`:
+- **One dataset release** (`curation.release`), following `tckdb/backend/docs/deployment/cutting_a_dataset_release.md`:
   - a curation policy, a draft release, and one selection per listed record (`kinetics`, `transition_state_entry`, or
     `thermo` with a SMILES), each named by its ARC run;
-  - the custody check (`backend/scripts/ops/verify_artifact_integrity.py --release`);
+  - the custody check (`tckdb/backend/scripts/ops/verify_artifact_integrity.py --release`);
   - publication. No DOI is minted.
   - Rights: the ARC deposits carry the depositor's `rights` fragment (`sources.arc_runs.rights`, tckdb-arc 0.15.6 or
     later). A deposit the release ships that has no rights basis is attested by the curator with `source_terms` when it
@@ -186,7 +193,7 @@ without its `generated_at`), and that the generator's output shows the files loa
 the records (above). Run the same comparison on any database holding the snapshot (a restored archive, say):
 
 ```bash
-cd backend && python -m scripts.paper.chemkin_export --check ../snapshot_out/chemkin_export
+python -m tckdb_paper_generators.chemkin_export --check snapshot_out/chemkin_export
 ```
 
 ## Check it
