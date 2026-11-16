@@ -89,8 +89,7 @@ python snapshot/instance.py down --name a --drop
 
 An editable install can point at another TCKDB checkout. `build.py` puts the submodule's packages and this
 repository's root first on its import path and on the `PYTHONPATH` of the processes it starts, and stops if `app`,
-`tckdb_client`, `tckdb_chemkin` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets the API
-process's `PYTHONPATH` the same way. `snapshot_record.json` records that the imports came from the submodule.
+`tckdb_client`, `tckdb_chemkin` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets only the submodule's package paths on the `PYTHONPATH` of the API process it starts; it does not check the imports. `snapshot_record.json` records that the imports came from the submodule.
 
 ## What comes out
 

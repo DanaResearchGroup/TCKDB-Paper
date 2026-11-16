@@ -658,6 +658,16 @@ def check_saved(session: Session, directory: Path) -> dict[str, Any]:
     return {"match": same_request and all(v == "same" for v in rows.values()), "request_same": same_request, "files": rows}
 
 
+def tckdb_root_problem(app_file: str | Path, declared: str | Path | None) -> str | None:
+    """Why ``app`` may not be used, or ``None`` when it was imported from the declared TCKDB checkout."""
+    if declared is None:
+        return "no TCKDB checkout is declared: pass --tckdb-root PATH (or set TCKDB_ROOT)"
+    root = Path(declared).expanduser().resolve()
+    if root not in Path(app_file).resolve().parents:
+        return f"app resolves outside the declared TCKDB checkout ({root})"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -665,15 +675,25 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", type=Path, required=True, help="directory of the files a build saved")
+    parser.add_argument(
+        "--tckdb-root",
+        type=Path,
+        default=None,
+        help="the TCKDB checkout app must be imported from (default: $TCKDB_ROOT, else the tckdb/ submodule beside "
+        "this package)",
+    )
     args = parser.parse_args(argv)
     import sys
 
     import app
 
-    submodule = Path(__file__).resolve().parents[1] / "tckdb"
+    declared = args.tckdb_root or os.environ.get("TCKDB_ROOT")
+    if declared is None and (Path(__file__).resolve().parents[1] / "tckdb").is_dir():
+        declared = Path(__file__).resolve().parents[1] / "tckdb"
     print(f"app imported from {app.__file__}", file=sys.stderr)
-    if submodule.resolve() not in Path(app.__file__).resolve().parents:
-        print(f"refused: app resolves outside the tckdb/ submodule ({submodule})", file=sys.stderr)
+    problem = tckdb_root_problem(app.__file__, declared)
+    if problem:
+        print(f"refused: {problem}", file=sys.stderr)
         return 2
     with SessionLocal() as session:
         result = check_saved(session, args.check)

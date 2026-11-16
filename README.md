@@ -37,7 +37,8 @@ python -m pip install -e "tckdb/backend[dev]"
 python -m pip install -e tckdb/clients/python
 ```
 
-`snapshot/build.py` and `python -m tckdb_paper_generators.chemkin_export --check` stop if `app` (or
+`snapshot/build.py` and `python -m tckdb_paper_generators.chemkin_export --check` (which takes `--tckdb-root PATH`
+or `$TCKDB_ROOT` when the package is not beside `tckdb/`) stop if `app` (or
 `tckdb_client`, `tckdb_chemkin`, `tckdb_schemas`) is imported from outside `tckdb/`. A PostgreSQL server with the RDKit cartridge must be reachable; the image CI uses is
 `informaticsmatters/rdkit-cartridge-debian:Release_2025_03_3`.
 

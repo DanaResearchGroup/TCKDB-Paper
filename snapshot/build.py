@@ -244,19 +244,56 @@ def _has_url(value: Any) -> bool:
 
 
 def private_values(config: dict[str, Any]) -> list[str]:
-    """The local paths and host names the sources file holds, which no output file may repeat."""
-    found: list[str] = []
+    """The local paths and host names the sources file holds, which no output file may repeat.
+
+    Each path is also taken in its expanded absolute form (``~`` and relative paths resolved), and the home directory
+    is always included.
+    """
+    found: set[str] = {str(Path.home())}
     for entry in (config.get("sources") or {}).values():
         for key in PATH_KEYS:
             value = (entry or {}).get(key)
-            found += [str(v) for v in (value if isinstance(value, list) else [value]) if v]
-    return found
+            for item in value if isinstance(value, list) else [value]:
+                if not item:
+                    continue
+                found.add(str(item))
+                if key != "recorded_hosts":
+                    path = Path(str(item)).expanduser()
+                    found.add(str(path))
+                    found.add(str((path if path.is_absolute() else REPO_ROOT / path).resolve()))
+                    found.add(str(path.resolve()))
+    return sorted(found)
 
 
 def leaks(texts: dict[str, str], config: dict[str, Any]) -> list[str]:
     """Names of the output files that repeat a path or host name of the sources file."""
     private = private_values(config)
     return sorted(name for name, text in texts.items() if any(value in text for value in private))
+
+
+def output_texts(out_dir: Path, record_text: str) -> dict[str, str]:
+    """The publishable outputs by name: the report (required), the record, ``expected_outputs/``, ``chemkin_export/``.
+
+    The archive and its job files are deposited verbatim and are not read here.
+    """
+    report = out_dir / "build_report.json"
+    if not report.is_file():
+        raise SystemExit(f"{report} is missing; the build cannot show its outputs are free of local paths and hosts")
+    texts = {"snapshot_record.json": record_text}
+    for path in [report, *sorted(p for d in ("expected_outputs", "chemkin_export") for p in (out_dir / d).rglob("*") if p.is_file())]:
+        texts[path.relative_to(out_dir).as_posix()] = path.read_text(encoding="utf-8", errors="replace")
+    return texts
+
+
+def withhold(out_dir: Path, names: list[str]) -> list[str]:
+    """Rename each leaking file to ``<name>.withheld`` so it cannot pass for a valid output; return the new names."""
+    renamed = []
+    for name in names:
+        source = out_dir / name
+        if source.is_file():
+            source.rename(source.with_name(source.name + ".withheld"))
+            renamed.append(name + ".withheld")
+    return renamed
 
 
 def source_records(config: dict[str, Any], report: Report) -> dict[str, Any]:
@@ -406,10 +443,13 @@ def main(argv: list[str] | None = None) -> int:
     }
     record_text = json.dumps(record, indent=2, sort_keys=True, default=str) + "\n"
     (out_dir / "snapshot_record.json").write_text(record_text)
-    published = {name: (out_dir / name).read_text() for name in ("build_report.json",) if (out_dir / name).is_file()}
-    leaked = leaks({**published, "snapshot_record.json": record_text}, config)
+    leaked = leaks(output_texts(out_dir, record_text), config)
     if leaked:
-        raise SystemExit(f"{', '.join(leaked)} repeat a local path or host name from the sources file; not publishable")
+        withheld = withhold(out_dir, leaked)
+        raise SystemExit(
+            f"{', '.join(leaked)} repeat a local path or host name from the sources file; renamed to "
+            f"{', '.join(withheld)}, which are not publishable"
+        )
     print(f"done in {record['wall_seconds']} s; wrote {out_dir}")
     return 0
 
