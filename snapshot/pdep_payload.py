@@ -2,9 +2,10 @@
 
     python -m snapshot.pdep_payload /arkane
 
-Run by ``source_pdep.py`` with the Arkane directory mounted read-only. Prints one JSON document: the
-``NetworkPDepUploadRequest`` the PDep ingester (``backend/scripts/pdep_ingestion``, ``network_only=True``) builds, what
-it could not carry over, and the rate of one channel at a reference point from the fit Arkane wrote to ``chem.inp``.
+Run by ``source_pdep.py`` and ``readback.py`` with the Arkane directory mounted read-only. Prints one JSON document:
+the ``NetworkPDepUploadRequest`` the PDep ingester (``backend/scripts/pdep_ingestion``, ``network_only=True``) builds,
+what it could not carry over, the rate of one channel at a reference point from the fit Arkane wrote to ``chem.inp``,
+and k of every Chebyshev fit of the request at the point ``readback.py`` reads the stored network at.
 """
 
 from __future__ import annotations
@@ -52,6 +53,25 @@ def chemkin_reference_rate(root: Path) -> dict[str, Any] | None:
     return None
 
 
+#: The point ``readback.py`` evaluates every stored Chebyshev fit at, as ``(temperature K, pressure bar)``.
+READBACK_POINT = (1000.0, 1.0)
+
+
+def chebyshev_k_at_readback_point(payload: dict[str, Any]) -> list[float]:
+    """k of every Chebyshev fit of the request at ``READBACK_POINT``, sorted, with TCKDB's own evaluator."""
+    from app.chemistry.network_kinetics_eval import evaluate_chebyshev
+
+    temperature, pressure = READBACK_POINT
+    fits = [c for c in payload["solve"]["channel_kinetics"] if c["model_kind"] == "chebyshev"]
+    return sorted(
+        evaluate_chebyshev(
+            temperature, pressure, coefficients=c["chebyshev"]["coefficients"], tmin_k=c["tmin_k"], tmax_k=c["tmax_k"],
+            pmin_bar=c["pmin_bar"], pmax_bar=c["pmax_bar"], stores_log10_k=c["stores_log10_k"],
+        ).k
+        for c in fits
+    )
+
+
 def build(root: Path) -> dict[str, Any]:
     from scripts.pdep_ingestion.builder import build_network_pdep_payload
 
@@ -67,7 +87,12 @@ def build(root: Path) -> dict[str, Any]:
         "channels_well_skipping": len(gap.channels_well_skipping),
         "unstorable_fields": gap.unstorable_fields,
     }
-    return {"payload": payload, "ingestion": ingestion, "arkane_reference_rate": chemkin_reference_rate(root)}
+    return {
+        "payload": payload,
+        "ingestion": ingestion,
+        "arkane_reference_rate": chemkin_reference_rate(root),
+        "chebyshev_k_at_readback_point": chebyshev_k_at_readback_point(payload),
+    }
 
 
 if __name__ == "__main__":

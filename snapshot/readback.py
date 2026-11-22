@@ -11,7 +11,8 @@ One sample per configured source:
 * ARC runs: CH4 + OH (``rotor_scan_rxn_188``), the computed record stored in that orientation. Its transition state's
   output logs are files of the run folder's ``calcs/TSs``; one is downloaded by digest and its SHA-256 equals the digest requested.
 * N2H3 network: one network of that name, citing the paper's DOI; every stored Chebyshev fit, evaluated by the server at
-  1000 K and 1 bar, equals the same evaluation of the fits read from the Arkane ``output.py`` (relative 1e-9).
+  1000 K and 1 bar, equals the same evaluation of the fits read from the Arkane ``output.py`` (relative 1e-9). The fits
+  are read and evaluated in the pinned TCKDB image (``pdep_payload.py``), so nothing of TCKDB's backend is imported here.
 
 Registers a reader account through open registration. A source with no entry is skipped.
 """
@@ -33,7 +34,6 @@ for _path in reversed(
         HERE,
         TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
         TCKDB_ROOT / "clients" / "python" / "src",
-        TCKDB_ROOT / "backend",
     ]
 ):
     if str(_path) not in sys.path:
@@ -41,6 +41,7 @@ for _path in reversed(
 
 import yaml  # noqa: E402
 
+import image  # noqa: E402
 import source_e2  # noqa: E402
 from common import Session, adapter_package_paths  # noqa: E402
 
@@ -144,19 +145,16 @@ def check_arc(client, cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def check_pdep(client, cfg: dict[str, Any]) -> dict[str, Any]:
-    from app.chemistry.network_kinetics_eval import evaluate_chebyshev
-    from scripts.pdep_ingestion.builder import build_network_pdep_payload
-
-    payload, _ = build_network_pdep_payload(Path(cfg["arkane_dir"]).expanduser(), network_only=True)
-    fits = [c for c in payload["solve"]["channel_kinetics"] if c["model_kind"] == "chebyshev"]
-    temperature, pressure = 1000.0, 1.0
-    expected = sorted(
-        evaluate_chebyshev(
-            temperature, pressure, coefficients=c["chebyshev"]["coefficients"], tmin_k=c["tmin_k"], tmax_k=c["tmax_k"],
-            pmin_bar=c["pmin_bar"], pmax_bar=c["pmax_bar"], stores_log10_k=c["stores_log10_k"],
-        ).k
-        for c in fits
+    # The request and the expected k are built in the pinned image, by TCKDB's own ingester and evaluator.
+    root = Path(cfg["arkane_dir"]).expanduser().resolve()
+    built = json.loads(
+        image.run(
+            ["python", "-m", "snapshot.pdep_payload", "/arkane"], {},
+            mounts={root: "/arkane"}, adapters=image.context["adapters"],
+        ).stdout
     )
+    payload, expected = built["payload"], built["chebyshev_k_at_readback_point"]
+    temperature, pressure = 1000.0, 1.0
     network = client.search_networks(has_chebyshev=True, limit=50)["records"]
     mine = [r for r in network if r["network"]["name"] == payload["name"]]
     ref = mine[0]["network"]["network_ref"]
@@ -191,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     if config.get("adapter_path"):  # the CHEMKIN check parses the model with the adapter of the build
         for _path in reversed(adapter_package_paths(config["adapter_path"])):
             sys.path.insert(0, str(_path))
+        image.context["adapters"] = Path(config["adapter_path"]).expanduser()
 
     session = Session(args.api_url)
     session.register_depositor("snapshot_reader", "snapshot-reader-pass", "reader@snapshot.invalid", "Snapshot read-back")
