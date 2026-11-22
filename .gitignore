@@ -222,3 +222,10 @@ __marimo__/
 # Snapshot build output
 .paper_snapshot_work/
 snapshot_out/
+
+# Local snapshot builds: outputs, work directories, sources files, comparisons and logs
+/out_*/
+/w_*/
+/f[0-9]*.yml
+/compare_*.txt
+/build_*.log
