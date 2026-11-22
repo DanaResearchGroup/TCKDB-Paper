@@ -65,7 +65,8 @@ jobs:
           miniforge-version: latest
           use-mamba: true
           environment-file: tckdb/backend/environment.yml
-          activate-environment: tckdb_paper_build
+          # TCKDB's test fixtures migrate with `conda run -n tckdb_env`, so the env carries that name here.
+          activate-environment: tckdb_env
           auto-activate-base: false
 
       - name: Install the pinned TCKDB packages
