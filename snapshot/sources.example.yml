@@ -1,27 +1,30 @@
 # Sources for the paper snapshot build. Copy, edit the paths, pass with --sources.
 #
-# The values below match the README's "Run it" steps: `make up` (database tckdb_dev on 127.0.0.1:5432, store at
-# localhost:9000) and `make api` (port 8010). Point them at any other empty instance.
+# The values below match the README's "Run it" steps: `instance.py up --name a --port 8101` (database
+# tckdb_test_snapshot_a on 127.0.0.1:5432, bucket tckdb-test-snapshot-a in the store at 127.0.0.1:9000).
 #
 # A source with no entry here is skipped, and the build says so. An entry that is enabled but cannot be built
 # (a missing path, an unknown level, a stub source) stops the build before anything is deposited.
 # Large source files are read from these paths; none is copied into the repository.
 
 instance:
-  api_url: http://127.0.0.1:8010
-  # The archive export and the curator account read/write the instance's database directly, so the build needs to
-  # know it. Anything left out falls back to DB_* / S3_* in the environment.
+  api_url: http://127.0.0.1:8101
+  # The API container, which must run the image pins.toml names (checked with docker inspect). Defaults to the name
+  # instance.py gives it, tckdb-snapshot-<name> for database tckdb_test_snapshot_<name>.
+  # container: tckdb-snapshot-a
+  # The archive export, the generators and the curator account (run in the image) use the instance's database
+  # directly, so the build needs to know it. Anything left out falls back to DB_* / S3_* in the environment.
   database:
     host: 127.0.0.1
     port: 5432
-    name: tckdb_dev
+    name: tckdb_test_snapshot_a
     user: tckdb
     password: tckdb
   s3:
-    endpoint_url: http://localhost:9000
+    endpoint_url: http://127.0.0.1:9000
     access_key: tckdb
     secret_key: tckdb_secret
-    bucket: tckdb-artifacts
+    bucket: tckdb-test-snapshot-a
 
 # A git checkout of tckdb-adapters at the commit in pins.toml. The CHEMKIN adapter (Source 4 and the generators) and the
 # QCSchema adapter are imported from its adapters/ directory; Source 2's adapter_path, when given, must be the same

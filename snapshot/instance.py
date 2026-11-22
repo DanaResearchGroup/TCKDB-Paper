@@ -10,8 +10,9 @@ refuses names without the ``tckdb_test_`` prefix.
 
 Needs Docker, Postgres with the RDKit cartridge (``docker compose up -d db`` in ``tckdb/``) and an S3-compatible store
 at ``S3_ENDPOINT_URL`` (default ``http://localhost:9000``, credentials ``S3_ACCESS_KEY`` / ``S3_SECRET_KEY``), both
-reachable on the host's network. The migrations, the API and ``restore`` run in the image; the database and the bucket
-are created from the host. Process state and the API's log live under ``--work-dir``.
+reachable on the host's network. The migrations, the API, ``restore`` and the creation and removal of the database and
+the bucket (``instance_admin.py``) run in the image, so the host needs only Docker and Python's standard library.
+Process state and the API's log live under ``--work-dir``.
 """
 
 from __future__ import annotations
@@ -49,40 +50,16 @@ def _db_env(name: str) -> dict[str, str]:
     )
 
 
-def _psql_connect(env: dict[str, str], dbname: str = "postgres"):
-    import psycopg
-
-    return psycopg.connect(
-        host=env["DB_HOST"], port=env["DB_PORT"], user=env["DB_USER"], password=env["DB_PASSWORD"],
-        dbname=dbname, autocommit=True,
-    )
-
-
-def _s3(env: dict[str, str]):
-    import boto3
-
-    return boto3.client(
-        "s3",
-        endpoint_url=env["S3_ENDPOINT_URL"],
-        aws_access_key_id=env["S3_ACCESS_KEY"],
-        aws_secret_access_key=env["S3_SECRET_KEY"],
-        region_name="us-east-1",
-    )
-
-
 def up(name: str, port: int, work_dir: Path) -> None:
     env = _db_env(name)
     dbname = env["DB_NAME"]
     image.ensure_pulled()
-    with _psql_connect(env) as conn:
-        exists = conn.execute("select 1 from pg_database where datname = %s", (dbname,)).fetchone()
-        if exists:
-            raise SystemExit(f"database {dbname} already exists; run 'down --drop' first")
-        conn.execute(f'create database "{dbname}"')
+    created = image.run(["python", "-m", "snapshot.instance_admin", "create"], env, check=False)
+    if created.returncode != 0:
+        raise SystemExit(f"could not create the database and bucket:\n{created.stdout}\n{created.stderr}")
     migrated = image.run(["alembic", "upgrade", "head"], env, check=False)
     if migrated.returncode != 0:
         raise SystemExit(f"alembic upgrade head failed in {image.IMAGE}:\n{migrated.stdout}\n{migrated.stderr}")
-    _s3(env).create_bucket(Bucket=env["S3_BUCKET"])
     work_dir.mkdir(parents=True, exist_ok=True)
     container = container_name(name)
     image.start(
@@ -116,22 +93,9 @@ def down(name: str, work_dir: Path, drop: bool) -> None:
     if state.is_file():
         state.unlink()
     if drop:
-        dbname = env["DB_NAME"]
-        if not dbname.startswith("tckdb_test_"):
-            raise SystemExit(f"refusing to drop {dbname}: not a tckdb_test_* database")
-        with _psql_connect(env) as conn:
-            conn.execute(f'drop database if exists "{dbname}" with (force)')
-        client = _s3(env)
-        bucket = env["S3_BUCKET"]
-        try:
-            paginator = client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=bucket):
-                keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
-                if keys:
-                    client.delete_objects(Bucket=bucket, Delete={"Objects": keys})
-            client.delete_bucket(Bucket=bucket)
-        except client.exceptions.NoSuchBucket:
-            pass
+        dropped = image.run(["python", "-m", "snapshot.instance_admin", "drop"], env, check=False)
+        if dropped.returncode != 0:
+            raise SystemExit(f"could not drop the database and bucket:\n{dropped.stdout}\n{dropped.stderr}")
 
 
 def restore(name: str, archive: Path) -> None:

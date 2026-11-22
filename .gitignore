@@ -229,3 +229,4 @@ snapshot_out/
 /f[0-9]*.yml
 /compare_*.txt
 /build_*.log
+/regenerated/

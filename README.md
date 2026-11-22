@@ -26,12 +26,16 @@ git clone --recurse-submodules https://github.com/DanaResearchGroup/TCKDB-Paper.
 cd TCKDB-Paper
 ```
 
-Create an environment for this repository from TCKDB's backend environment file and install the submodule's packages
-into it, the way CI does. Cantera 3.2.0 is part of the environment file. Use an environment of its own: the API writes
-the installed `tckdb-backend` and `tckdb-schemas` versions into every release manifest, so an environment holding
-another TCKDB checkout's install would misstate them. `snapshot/build.py` and `snapshot/instance.py up` refuse to run
-when the installed `tckdb-backend`, `tckdb-client` or `tckdb-schemas` is not the version the submodule declares, and
-`tests/test_pins.py` checks the same.
+TCKDB itself runs from the container image `pins.toml` names, by digest (`[tckdb].image` and `image_digest`): the API,
+the migrations, the operator CLI, the archive tool and the expected-output generators all run in it (`snapshot/README.md`,
+"How it runs"). Reproducing the numbers needs Docker, this repository and the archive (see "Reproduce" below).
+
+The unit tests, and the host side of the build (the deposit clients, which talk to the API over HTTP), use a Python
+environment of their own. Create it from TCKDB's backend environment file and install the submodule's packages into
+it, the way CI does. Cantera 3.2.0 is part of the environment file. The tests check that the installed
+`tckdb-backend`, `tckdb-client` and `tckdb-schemas` are the versions the submodule declares, and `snapshot/build.py`
+refuses to run when the installed `tckdb-client` or `tckdb-schemas` is not (the client sends its installed version with
+every request).
 
 ```bash
 conda env create -n tckdb_paper_build -f tckdb/backend/environment.yml
@@ -42,7 +46,7 @@ python -m pip install -e tckdb/clients/python
 python -c "import importlib.metadata as m; print(*(m.version(d) for d in ('tckdb-backend', 'tckdb-schemas', 'tckdb-client')))"
 ```
 
-Run every command below in this environment. After moving the submodule to another commit, run the three installs
+Run the tests and the build in this environment. After moving the submodule to another commit, run the three installs
 again.
 
 The CHEMKIN and QCSchema adapters are not in TCKDB; they come from a git checkout of
@@ -86,6 +90,61 @@ python snapshot/instance.py up --name a --port 8101
 python snapshot/build.py --sources my_sources.yml --out-dir out_a
 python snapshot/instance.py down --name a --drop
 ```
+
+The output holds the archive (`tckdb.archive`), the expected outputs, the CHEMKIN export, `build_report.json`,
+`build_record.json` (which records the digest of the image the API ran) and the image itself,
+`tckdb-api-<version>.tar.gz`, with its SHA-256 in `build_record.json` (`exports.image`).
+
+## Reproduce
+
+From the deposited archive and image, with Docker, a clone of this repository at the commit `build_record.json` names
+(`source_commit.commit`, with its submodule) and a checkout of tckdb-adapters at `source_commit.tckdb_adapters_commit`.
+No Python environment is built: `instance.py` and `compare.py` use only Python's standard library, and everything that
+imports TCKDB runs in the image.
+
+```bash
+# 1. The image: load the deposited file (check its SHA-256 first), or pull the same digest.
+sha256sum tckdb-api-0.4.0.tar.gz            # = build_record.json exports.image.sha256
+docker load -i tckdb-api-0.4.0.tar.gz
+docker pull laxzal/tckdb-api@sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec4cfdfba   # or this
+
+# 2. Postgres with the RDKit cartridge and an object store, from the submodule's compose file.
+(cd tckdb && DB_PASSWORD=tckdb S3_SECRET_KEY=tckdb_secret docker compose up -d db seaweedfs)
+export S3_ENDPOINT_URL=http://127.0.0.1:9000 S3_ACCESS_KEY=tckdb S3_SECRET_KEY=tckdb_secret
+
+# 3. An empty instance from the image, and the archive restored into it.
+python3 snapshot/instance.py up --name r --port 8110
+python3 snapshot/instance.py restore --name r --archive /path/to/tckdb.archive
+
+# 4. In the image, from the restored instance: the expected outputs regenerated, the archive exported again, and the
+#    deposited CHEMKIN export checked against an in-process export of the same records.
+IMAGE=laxzal/tckdb-api@sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec4cfdfba
+DEPOSITED=/path/to/deposited_output       # tckdb.archive, expected_outputs/, chemkin_export/
+mkdir -p regenerated/expected_outputs
+tckdb() {
+  docker run --rm --network host --user "$(id -u):$(id -g)" --env HOME=/tmp \
+    --volume "$PWD:/paper:ro" --volume /path/to/tckdb-adapters:/adapters:ro \
+    --volume "$PWD/regenerated:/regenerated:rw" --volume "$DEPOSITED:/deposited:ro" \
+    --env PYTHONPATH=/paper:/adapters/adapters/tckdb_chemkin:/adapters/adapters/tckdb_qcschema \
+    --env DB_HOST=127.0.0.1 --env DB_PORT=5432 --env DB_USER=tckdb --env DB_PASSWORD=tckdb \
+    --env DB_NAME=tckdb_test_snapshot_r --env S3_BUCKET=tckdb-test-snapshot-r --env S3_ENDPOINT_URL \
+    --env S3_ACCESS_KEY --env S3_SECRET_KEY "$IMAGE" "$@"
+}
+ONLY=$(for f in "$DEPOSITED"/expected_outputs/*.json; do printf -- '--only %s ' "$(basename "$f" .json)"; done)
+tckdb python scripts/ops/generate_expected_outputs.py --generators tckdb_paper_generators.registry:GENERATORS \
+  --output-dir /regenerated/expected_outputs $ONLY      # the generators the deposited output holds
+tckdb python scripts/tckdb_archive.py create /regenerated/tckdb.archive --overwrite
+tckdb python -m tckdb_paper_generators.chemkin_export --check /deposited/chemkin_export --tckdb-root /app
+cp -r "$DEPOSITED/chemkin_export" regenerated/
+
+# 5. Compare with the deposited output (public refs, timestamps and the bucket name masked), then remove the instance.
+python3 snapshot/compare.py "$DEPOSITED" regenerated
+python3 snapshot/instance.py down --name r --drop
+```
+
+`compare.py` prints a JSON report and a `RESULT` line. The release manifest stored in the archive names the image's
+`tckdb-backend` and `tckdb-schemas` versions and the database revision, so a restore into another TCKDB version shows
+up there.
 
 ## Pinned versions
 

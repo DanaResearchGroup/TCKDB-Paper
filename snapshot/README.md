@@ -2,9 +2,9 @@
 
 One command rebuilds the demonstration snapshot on an empty local TCKDB instance. The snapshot is built
 from four existing data sources, deposited through the same public routes a contributor would use. It is not a hosted
-instance, and the script is the deliverable, not the database. TCKDB itself is the `tckdb/` submodule; every TCKDB
-tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`, `verify_artifact_integrity.py`,
-`generate_expected_outputs.py`) runs from there.
+instance, and the script is the deliverable, not the database. TCKDB itself runs from the container image `pins.toml`
+names, by digest; every TCKDB tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`,
+`verify_artifact_integrity.py`, `generate_expected_outputs.py`) runs in that image (see "How it runs").
 
 ## What it deposits
 
@@ -57,41 +57,51 @@ tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`
   - The adapter's own import warnings (wrong `DUPLICATE` flags) are kept in the report; the importer never
     repairs them.
 
+## How it runs
+
+| Where | What |
+|---|---|
+| The pinned image (`image.py`), host network, as the invoking user | the API (`instance.py up`, container `tckdb-snapshot-<name>`); the migrations; creating and dropping the database and bucket (`instance_admin.py`); the curator account (`bootstrap_admin.py`); the PDep ingester (`pdep_payload.py`); the custody check (`verify_artifact_integrity.py`); the archive (`tckdb_archive.py`); the expected-output generators (`generate_expected_outputs.py` with `tckdb_paper_generators`); the CHEMKIN export check (`chemkin_export --check`); the versions recorded for TCKDB |
+| The host (the environment of the top-level `README.md`) | `build.py` and the deposit clients, which talk to the API over HTTP only: the client builders (Source 1), the CHEMKIN adapter (Source 4), the posts of Sources 2 and 3, the curator's HTTP calls and the CHEMKIN export request |
+| The ARC Python (`adapter_command`) | the ARC adapter (Source 2), over HTTP |
+
+Every container is started from `laxzal/tckdb-api@<image_digest>`. This repository is mounted read-only at `/paper` and
+put on the image's `PYTHONPATH` (for `tckdb_paper_generators` and the two scripts above), with the CHEMKIN and QCSchema
+adapters of the tckdb-adapters checkout (mounted read-only at `/adapters`). Nothing of the `tckdb/` submodule is put on
+the image's path: the backend, `tckdb-schemas` and Cantera are the image's own. The only writable mount is the
+directory a step writes (the archive, `expected_outputs/`).
+
+Before it deposits anything the build checks that the API container runs the pinned digest (`docker inspect`;
+`instance.container` in the sources file, else the name `instance.py` gives it), and it checks again when it writes
+`build_record.json`, which records the digest (`tckdb_image.api_container_image_digest`) and the versions inside the
+image (`tckdb_image.inside`). It then saves the image, gzipped, as `tckdb-api-<version>.tar.gz` in the output, with its
+size and SHA-256 in `build_record.json` (`exports.image`).
+
 ## Run it
 
-Needs a Python environment set up as in the top-level `README.md`, a PostgreSQL server with the RDKit cartridge and an
-S3-compatible object store for job files; the `tckdb/` submodule's compose file starts both. The steps below and
-`sources.example.yml` agree: database `tckdb_dev`, API on port 8010, store at `localhost:9000`.
+Needs Docker, a Python environment set up as in the top-level `README.md` (for the host side), a PostgreSQL server
+with the RDKit cartridge and an S3-compatible object store on the host's network; the `tckdb/` submodule's compose file
+starts both.
 
 ```bash
 git submodule update --init
-cd tckdb
-docker compose up -d db seaweedfs          # or any S3-compatible store at S3_ENDPOINT_URL
-make up                                    # migrations on tckdb_dev (an empty instance)
-RATE_LIMIT_ENABLED=false make api          # in a second terminal
-cd ..
-cp snapshot/sources.example.yml my_sources.yml   # set the E2 root and adapter_path
-python snapshot/build.py --sources my_sources.yml --out-dir snapshot_out
-```
-
-The build refuses a non-empty instance, and checks the whole sources file (every enabled source, stubs included)
-before it deposits anything. `RATE_LIMIT_ENABLED=false` matters: one client making a few thousand calls would
-otherwise spend the per-minute budget.
-
-`instance.py` makes a throw-away instance for rehearsals (database `tckdb_test_snapshot_<name>`, bucket
-`tckdb-test-snapshot-<name>`, an API on a local port). Point `instance`, `database` and `s3` in your sources file at it:
-
-```bash
+(cd tckdb && DB_PASSWORD=tckdb S3_SECRET_KEY=tckdb_secret docker compose up -d db seaweedfs)
 python snapshot/instance.py up --name a --port 8101
-python snapshot/build.py --sources my_sources.yml
+cp snapshot/sources.example.yml my_sources.yml   # set the E2 root and adapter_path; instance, database and s3 at
+                                                 # 127.0.0.1:8101, tckdb_test_snapshot_a, tckdb-test-snapshot-a
+python snapshot/build.py --sources my_sources.yml --out-dir snapshot_out
 python snapshot/instance.py down --name a --drop
 ```
 
-An editable install can point at another TCKDB checkout. `build.py` puts the submodule's packages and this
-repository's root first on its import path and on the `PYTHONPATH` of the processes it starts, and stops if `app`,
-`tckdb_client` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets only the submodule's package
-paths on the `PYTHONPATH` of the API process it starts; it does not check the imports. `build_record.json` records
-that the imports came from the submodule.
+The build refuses a non-empty instance, and checks the whole sources file (every enabled source, stubs included)
+before it deposits anything. `instance.py` starts the API with `RATE_LIMIT_ENABLED=false`: one client making a few
+thousand calls would otherwise spend the per-minute budget. The build also refuses unless the `tckdb/` submodule and
+the tckdb-adapters checkout are at the commits `pins.toml` names.
+
+`build.py` puts the submodule's `tckdb-client` and `tckdb-schemas` and this repository's root first on its import path,
+and stops if `tckdb_client` or `tckdb_schemas` is imported from outside `tckdb/`, or if the installed `tckdb-client` or
+`tckdb-schemas` is not the submodule's version (the client sends its installed version with every request).
+`build_record.json` records both.
 
 ### The tckdb-adapters checkout
 
@@ -113,8 +123,8 @@ sources:
 
 The build refuses a sources file whose `adapter_path` is missing, is not the top level of a git checkout holding
 `adapters/tckdb_chemkin` and `adapters/tckdb_qcschema`, or differs from `arc_runs.adapter_path`. It puts the two
-adapters' directories first on its import path and on the `PYTHONPATH` of the processes it starts (the generators, the
-custody check, the CHEMKIN export check), and stops if either is imported from anywhere else. `build_record.json`
+adapters' directories first on its import path, mounts the checkout read-only in the image containers that need them
+(the generators, the PDep ingester), and stops if either is imported on the host from anywhere else. `build_record.json`
 records the checkout's commit (`source_commit.tckdb_adapters_commit`) and the versions its pyproject files declare
 (`packages.declared_by_the_adapters_checkout`); the path itself is never written. `readback.py` reads `adapter_path`
 from the same sources file. The unit tests take the checkout from `TCKDB_ADAPTERS_ROOT` instead (top-level
@@ -220,10 +230,11 @@ deposit; the exporter never picks, and a refusal stops the build with the server
 
 The build then checks that the saved files equal the in-process export byte for byte, refs included (`manifest.json`
 without its `generated_at`), and that the generator's output shows the files loaded in Cantera and the rate and H298 agreeing with
-the records (above). Run the same comparison on any database holding the snapshot (a restored archive, say):
+the records (above). Run the same comparison on any database holding the snapshot (a restored archive, say), in the image as the top-level
+`README.md` ("Reproduce", step 4) shows:
 
 ```bash
-python -m tckdb_paper_generators.chemkin_export --check snapshot_out/chemkin_export
+python -m tckdb_paper_generators.chemkin_export --check /deposited/chemkin_export --tckdb-root /app
 ```
 
 ## Check it
@@ -237,6 +248,9 @@ python snapshot/instance.py up --name c --port 8103
 python snapshot/instance.py restore --name c --archive snapshot_out/tckdb.archive
 python snapshot/readback.py --api-url http://127.0.0.1:8103 --sources my_sources.yml
 ```
+
+`readback.py` runs on the host in the environment of the top-level `README.md`: it evaluates the N2H3 Chebyshev fits
+with TCKDB's own function, imported from the submodule.
 
 `compare.py` does not expect identical bytes: public refs are random and timestamps differ. It masks public refs in
 the expected outputs and, for the archive, timestamps, refs and the bucket name in artifact URIs. It re-sorts
