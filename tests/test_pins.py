@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PINS = tomllib.loads((ROOT / "pins.toml").read_text())
 PACKAGE_FILES = {
     "tckdb-client": "clients/python/pyproject.toml",
-    "tckdb-chemkin": "clients/python/adapters/chemkin/pyproject.toml",
     "tckdb-schemas": "schemas/python/tckdb-schemas/pyproject.toml",
 }
 

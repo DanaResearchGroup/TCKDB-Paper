@@ -2,18 +2,17 @@
 
 [tckdb]
 repository = "https://github.com/TCKDB/TCKDB.git"
-commit = "bd53cfc6b870cd623c0a69e6a15d8a731d9ef962"
-tag = "v0.2.0"
-image = "laxzal/tckdb-api:sha-bd53cfc6b870cd623c0a69e6a15d8a731d9ef962"
-image_digest = "sha256:74637d4ef23d150f468209831a9c1b02e8d7b718d24420de4e6663f569bb07f2"
-image_version_tag = "laxzal/tckdb-api:0.2.0"
-image_version_tag_digest = "sha256:74637d4ef23d150f468209831a9c1b02e8d7b718d24420de4e6663f569bb07f2"
+commit = "67a812c7dec5cf2a10fc48955fa92bf71895d4f4"
+tag = "v0.4.0"
+image = "laxzal/tckdb-api:sha-67a812c7dec5cf2a10fc48955fa92bf71895d4f4"
+image_digest = "sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec4cfdfba"
+image_version_tag = "laxzal/tckdb-api:0.4.0"
+image_version_tag_digest = "sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec4cfdfba"
 
 # Package versions declared by the pinned TCKDB commit.
 [tckdb.packages]
-tckdb-client = "0.208.2"
-tckdb-chemkin = "0.7.3"
-tckdb-schemas = "0.175.2"
+tckdb-client = "0.211.0"
+tckdb-schemas = "0.177.3"
 
 # Used by the ARC source of the snapshot build (not needed for the unit tests).
 [tckdb_adapters]
