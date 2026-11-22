@@ -89,7 +89,7 @@ python snapshot/instance.py down --name a --drop
 
 An editable install can point at another TCKDB checkout. `build.py` puts the submodule's packages and this
 repository's root first on its import path and on the `PYTHONPATH` of the processes it starts, and stops if `app`,
-`tckdb_client`, `tckdb_chemkin` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets only the submodule's package paths on the `PYTHONPATH` of the API process it starts; it does not check the imports. `snapshot_record.json` records that the imports came from the submodule.
+`tckdb_client`, `tckdb_chemkin` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets only the submodule's package paths on the `PYTHONPATH` of the API process it starts; it does not check the imports. `build_record.json` records that the imports came from the submodule.
 
 ## What comes out
 
@@ -100,7 +100,7 @@ In `--out-dir`:
   run as `--generators tckdb_paper_generators.registry:GENERATORS` (the generators registered in
   `tckdb_paper_generators/registry.py`).
 - `build_report.json`: per source what was deposited, and every refusal and warning grouped by code.
-- `snapshot_record.json`: source commit (this repository's and the submodule's), package versions, the approval statement, archive digest, and per source
+- `build_record.json`: source commit (this repository's and the submodule's), package versions, the approval statement, archive digest, and per source
   its options and a count and digest of the files it read. No path on the builder's machine is written to it.
 
 Generators run for the snapshot: `corpus_counts`, `conformer_basins`, `calculation_evidence`, `deposit_warnings`,
@@ -113,7 +113,7 @@ Generators run for the snapshot: `corpus_counts`, `conformer_basins`, `calculati
   transition state's imaginary frequency and IRC evidence, the levels of the cited energies, and the deposit's warnings.
 - `use_case_chemkin_export`: the CHEMKIN export of the use case, made in-process by the export route's own function
   from the database alone (no API, no saved files). The request is found from the published release
-  `snapshot-demo-1` and the rate record's submission: the rate record is the one the release selects; the [CH3] thermo
+  `demo-release-1` and the rate record's submission: the rate record is the one the release selects; the [CH3] thermo
   record must be both selected by the release and deposited by that submission (a [CH3] record in only one of them is
   not named); the thermo records of the other species are the ones that submission deposited. The output has the
   records named, a digest of each file (refs masked, `generated_at` removed), what the manifest says could not be
@@ -147,7 +147,7 @@ once refs are masked.
 
 The CHEMKIN deposit cites the paper by DOI, and the server fetches the DOI's metadata from Crossref when it stores
 the literature row. The row, and so the archive, therefore depends on whether that lookup was reachable and what the
-registry returned at the time. `snapshot_record.json` records what was stored: the title, whether the title came from
+registry returned at the time. `build_record.json` records what was stored: the title, whether the title came from
 the registry or from the sources file (`title_source`), and the number of authors. The literature payload has no
 author field, and in the build checked the stored row had no authors (`authors_stored` in the record). Rebuilding offline, or after the registry changes the
 record, can change that row and nothing else.
@@ -177,7 +177,7 @@ block of the sources file.
   - Rights: the ARC deposits carry the depositor's `rights` fragment (`sources.arc_runs.rights`, tckdb-arc 0.15.6 or
     later). A deposit the release ships that has no rights basis is attested by the curator with `source_terms` when it
     came from a source named in `curation.release.source_terms`; any other stops the build.
-- `snapshot_record.json` (`approval`) holds the calls' answers: the finding, every record review, the selections, the
+- `build_record.json` (`approval`) holds the calls' answers: the finding, every record review, the selections, the
   attestations and the manifest's verification.
 
 ## The CHEMKIN export

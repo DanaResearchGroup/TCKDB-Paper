@@ -10,7 +10,7 @@ Steps:
 4. create a curator and curate: approval, the caught error, the release (a demonstration, recorded as such);
 5. export the use case as a CHEMKIN mechanism as the curator (``chemkin_export`` in the sources file);
 6. export the archive and the expected outputs; the CHEMKIN output must show the files loaded in Cantera;
-7. write ``build_report.json`` (warnings and refusals by code) and ``snapshot_record.json``.
+7. write ``build_report.json`` (warnings and refusals by code) and ``build_record.json``.
 """
 
 from __future__ import annotations
@@ -67,6 +67,7 @@ EXPECTED_OUTPUTS = (
     "candidate_lineage",
     "transition_state_evidence",
     "use_case_ch4_oh",
+    "approved_record_edits",
     "use_case_chemkin_export",
     "ch3_enthalpy_of_formation",
     "network_n2h3",
@@ -76,7 +77,7 @@ EXPECTED_OUTPUTS = (
     "dataset_release",
 )
 
-#: Config keys holding local paths or host names; omitted from ``snapshot_record.json``.
+#: Config keys holding local paths or host names; omitted from ``build_record.json``.
 PATH_KEYS = frozenset({"root", "fixture_dir", "adapter_path", "arc_path", "runs_root", "arkane_dir", "recorded_hosts"})
 TOP_LEVEL_KEYS = frozenset({"instance", "sources", "accounts", "expected_outputs", "curation", "chemkin_export"})
 
@@ -107,7 +108,10 @@ def curation_problems(config: dict[str, Any]) -> list[str]:
     plan = config.get("curation") or {}
     arc = (config.get("sources") or {}).get("arc_runs") or {}
     runs = set(arc.get("runs") or []) if arc.get("enabled", True) else set()
-    problems = [f"curation: unknown key {k!r}" for k in sorted(set(plan) - {"caught_error", "release"})]
+    problems = [f"curation: unknown key {k!r}" for k in sorted(set(plan) - {"caught_error", "release", "use_case"})]
+    use_case = plan.get("use_case")
+    if use_case is not None and (use_case or {}).get("run") not in runs:
+        problems.append(f"curation.use_case: run {(use_case or {}).get('run')!r} is not in sources.arc_runs.runs")
     caught = plan.get("caught_error")
     if caught:
         if caught.get("run") not in runs:
@@ -127,6 +131,34 @@ def curation_problems(config: dict[str, Any]) -> list[str]:
             if item.get("record") == "thermo" and not item.get("smiles"):
                 problems.append(f"curation.release: thermo selection {item} names no smiles")
     return problems
+
+
+EDITS_OUTPUT = "approved_record_edits"
+
+
+def edit_refusal_problems(document: dict[str, Any]) -> list[str]:
+    """What the edits output fails to show: every attempt on an approved record refused by the database's trigger, the
+    value unchanged, and the same change accepted on at least one never-approved record (so the refusal is the
+    approval's doing, not a read-only session's)."""
+    out: list[str] = []
+    approved = document.get("approved_records") or []
+    controls = document.get("control_rejected_records") or []
+    if not approved:
+        out.append("no approved computed rate record of the use case was tried")
+    if not controls:
+        out.append("no rejected rate record was tried as the control")
+    sqlstate = document.get("expected_sqlstate_of_a_refusal")
+    for row in approved:
+        for attempt in row["attempts"]:
+            if not attempt.get("refused") or attempt.get("sqlstate") != sqlstate or "is immutable" not in (attempt.get("message") or ""):
+                out.append(f"{row['kinetics_ref']}: {attempt['attempt']} was not refused as immutable: {attempt}")
+        if not row.get("a_after_rollback_equals_a_before"):
+            out.append(f"{row['kinetics_ref']}: A changed")
+    for row in controls:
+        for attempt in row["attempts"]:
+            if attempt.get("refused") or attempt.get("rows_affected") != 1:
+                out.append(f"control {row['kinetics_ref']}: {attempt['attempt']} was not accepted: {attempt}")
+    return out
 
 
 def validate_config(config: dict[str, Any]) -> list[str]:
@@ -279,7 +311,7 @@ def output_texts(out_dir: Path, record_text: str) -> dict[str, str]:
     report = out_dir / "build_report.json"
     if not report.is_file():
         raise SystemExit(f"{report} is missing; the build cannot show its outputs are free of local paths and hosts")
-    texts = {"snapshot_record.json": record_text}
+    texts = {"build_record.json": record_text}
     for path in [report, *sorted(p for d in ("expected_outputs", "chemkin_export") for p in (out_dir / d).rglob("*") if p.is_file())]:
         texts[path.relative_to(out_dir).as_posix()] = path.read_text(encoding="utf-8", errors="replace")
     return texts
@@ -402,6 +434,15 @@ def main(argv: list[str] | None = None) -> int:
                         reviewer, report, config["chemkin_export"], out_dir, approval.get("release")
                     )
                     print(f"[chemkin_export] {sorted(approval['chemkin_export']['files'])} written")
+                if plan.get("use_case"):
+                    run = plan["use_case"]["run"]
+                    approval["use_case_grades"] = curation.grade_use_case(reviewer, report, run)
+                    approval["approved_calculation_file_refused"] = curation.add_file_to_approved_calculation(
+                        session, reviewer, report, run
+                    )
+                    print(f"[curation] {run}: {len(approval['use_case_grades']['graded'])} records graded; "
+                          f"adding a file to an approved calculation answered "
+                          f"{approval['approved_calculation_file_refused']['status_code']}")
             finally:
                 reviewer.close()
 
@@ -426,6 +467,10 @@ def main(argv: list[str] | None = None) -> int:
                 exports["chemkin_export_saved_files_vs_in_process_export"] = use_case_export.check_saved(
                     out_dir / use_case_export.DIRECTORY, env
                 )
+            if EDITS_OUTPUT in wanted:
+                refused = edit_refusal_problems(json.loads((out_dir / "expected_outputs" / f"{EDITS_OUTPUT}.json").read_text()))
+                if refused:
+                    raise SystemExit("the refusal of edits to approved records is not shown:\n  - " + "\n  - ".join(refused))
             exports["expected_outputs"] = [ln for ln in printed if re.match(r"^[0-9a-f]{64}  ", ln)]
             exports["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
 
@@ -442,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
         "wall_seconds": round(time.time() - started, 1),
     }
     record_text = json.dumps(record, indent=2, sort_keys=True, default=str) + "\n"
-    (out_dir / "snapshot_record.json").write_text(record_text)
+    (out_dir / "build_record.json").write_text(record_text)
     leaked = leaks(output_texts(out_dir, record_text), config)
     if leaked:
         withheld = withhold(out_dir, leaked)

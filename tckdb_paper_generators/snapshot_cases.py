@@ -1,6 +1,9 @@
 """Generators for the worked cases of the demonstration snapshot (``snapshot``).
 
-* ``use_case_ch4_oh``: the computed rate coefficient of C + [OH] => O + [CH3], its transition state and k(300 K).
+* ``use_case_ch4_oh``: the computed rate coefficient of C + [OH] => O + [CH3], its transition state, k(300 K) and the
+  reproducibility grades stored for the rate record and its calculations.
+* ``approved_record_edits``: an attempt to change and to delete the approved rate record of the use case, made in the
+  database and rolled back, next to the same change on a rejected rate record.
 * ``ch3_enthalpy_of_formation``: every thermo record of [CH3] and the H298 selection answer with a level filter.
 * ``network_n2h3``: wells, channels and k(T, P) forms of each stored network, and k(1000 K, 1 bar) of NH3N -> N2H3.
 * ``chemkin_reconciliation``: reactions of the committed formic acid model file against what was stored.
@@ -20,7 +23,8 @@ import json
 from collections import Counter, defaultdict
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.db.models.calculation import Calculation, CalculationFreqMode
@@ -41,6 +45,7 @@ from app.db.models.network import Network
 from app.db.models.network_pdep import NetworkKinetics, NetworkState
 from app.db.models.reaction import ChemReaction, ReactionEntry, ReactionParticipant
 from app.db.models.record_review import RecordReview
+from app.db.models.reproducibility_assessment import RecordReproducibilityAssessment
 from app.db.models.species import Species, SpeciesEntry
 from app.db.models.structure_determination import StructureEvidenceFinding
 from app.db.models.submission import Submission, SubmissionRecordLink
@@ -455,6 +460,56 @@ def _selection_assessment(session: Session, kinetics: Kinetics) -> dict[str, Any
     }
 
 
+def _latest_grade(session: Session, record_type: SubmissionRecordType, record_id: int) -> dict[str, Any] | None:
+    """The newest stored reproducibility assessment of one record: its grade and rubric, or ``None`` when none is stored."""
+    row = session.scalars(
+        select(RecordReproducibilityAssessment)
+        .where(
+            RecordReproducibilityAssessment.record_type == record_type,
+            RecordReproducibilityAssessment.record_id == record_id,
+        )
+        .order_by(RecordReproducibilityAssessment.assessed_at.desc(), RecordReproducibilityAssessment.id.desc())
+    ).first()
+    if row is None:
+        return None
+    return {"grade": _v(row.grade), "rubric": f"{row.rubric_name} v{row.rubric_version}"}
+
+
+def _use_case_grades(session: Session, kinetics: Kinetics) -> dict[str, Any]:
+    """Grades of the rate record, the calculations it cites and the calculations of its transition states."""
+    cited = {
+        link.calculation.id: link.calculation
+        for link in session.scalars(
+            select(KineticsSourceCalculation).where(KineticsSourceCalculation.kinetics_id == kinetics.id)
+        )
+    }
+    ts_calcs = {
+        calc.id: calc
+        for ts in session.scalars(select(TransitionState).where(TransitionState.reaction_entry_id == kinetics.reaction_entry_id))
+        for ts_entry in ts.entries
+        for calc in ts_entry.calculations
+    }
+    calcs = {**ts_calcs, **cited}
+    rows = sorted(
+        (
+            {
+                **_calculation_row(calc),
+                "cited_by_the_rate_record": calc.id in cited,
+                "assessment": _latest_grade(session, SubmissionRecordType.calculation, calc.id),
+            }
+            for calc in calcs.values()
+        ),
+        key=lambda r: (r["subject"], r["type"], r["level_of_theory"], content_key(r)),
+    )
+    grades = Counter((r["assessment"] or {}).get("grade", "not_assessed") for r in rows)
+    return {
+        "rate_record": _latest_grade(session, SubmissionRecordType.kinetics, kinetics.id),
+        "calculations": rows,
+        "calculation_count": len(rows),
+        "calculations_by_grade": dict(sorted(grades.items())),
+    }
+
+
 def _use_case_record(session: Session, kinetics: Kinetics) -> dict[str, Any]:
     links = list(
         session.scalars(select(KineticsSourceCalculation).where(KineticsSourceCalculation.kinetics_id == kinetics.id))
@@ -496,6 +551,7 @@ def _use_case_record(session: Session, kinetics: Kinetics) -> dict[str, Any]:
         "deposit_warnings": _warning_counts(session, submissions),
         "deposit": _submission_context(session, submissions),
         "selection_assessment": _selection_assessment(session, kinetics),
+        "reproducibility": _use_case_grades(session, kinetics),
     }
 
 
@@ -540,6 +596,99 @@ def use_case_ch4_oh(session: Session) -> dict[str, Any]:
         "note": (
             "Records of other origin on this reaction are listed separately, not in computed_records. "
             "The reverse reaction is a separate stored reaction; its records are listed for reference only."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# approved_record_edits
+# ---------------------------------------------------------------------------
+
+EDIT_STATEMENTS = (
+    ("change A", "UPDATE kinetics SET a = a * 2 WHERE id = :id"),
+    ("delete", "DELETE FROM kinetics WHERE id = :id"),
+)
+REFUSAL_SQLSTATE = "55000"
+
+
+class _Undo(Exception):
+    """Raised inside a savepoint to roll back a statement that the database accepted."""
+
+
+def _attempt(session: Session, statement: str, record_id: int) -> dict[str, Any]:
+    """Run one statement in a savepoint that is always rolled back; report whether the database refused it."""
+    outcome: dict[str, Any] = {}
+    try:
+        with session.begin_nested():
+            result = session.execute(text(statement), {"id": record_id})
+            outcome = {"refused": False, "rows_affected": result.rowcount}
+            raise _Undo
+    except _Undo:
+        pass
+    except DBAPIError as exc:
+        diag = getattr(exc.orig, "diag", None)
+        outcome = {
+            "refused": True,
+            "sqlstate": getattr(exc.orig, "sqlstate", None),
+            "message": getattr(diag, "message_primary", None) or str(exc.orig).splitlines()[0],
+            "hint": getattr(diag, "message_hint", None),
+        }
+    return outcome
+
+
+def _edit_trial(session: Session, kinetics: Kinetics, statements) -> dict[str, Any]:
+    before = session.scalar(select(Kinetics.a).where(Kinetics.id == kinetics.id))
+    attempts = [{"attempt": name, "statement": sql.replace(":id", "<this record>"), **_attempt(session, sql, kinetics.id)}
+                for name, sql in statements]
+    session.expire_all()
+    after = session.scalar(select(Kinetics.a).where(Kinetics.id == kinetics.id))
+    return {
+        "kinetics_ref": kinetics.public_ref,
+        "reaction": equation(kinetics.reaction_entry.reaction),
+        "review_status": _review_status(session, SubmissionRecordType.kinetics, kinetics.id),
+        "ever_approved": session.scalar(
+            select(RecordReview.first_approved_at.is_not(None)).where(
+                RecordReview.record_type == SubmissionRecordType.kinetics, RecordReview.record_id == kinetics.id
+            )
+        )
+        or False,
+        "attempts": attempts,
+        "a_after_rollback_equals_a_before": after == before,
+    }
+
+
+def approved_record_edits(session: Session) -> dict[str, Any]:
+    """Try to change and delete the approved computed rate record of the use case; try the same change on a rejected one.
+
+    Each statement runs as the database owner, inside a savepoint that is rolled back whatever happens, so the
+    database is left as it was. The approved record is the computed record of C + [OH] => O + [CH3]; the control is
+    every rejected rate record, which has never been approved.
+    """
+    forward = _reactions_with(session, USE_CASE_REACTANTS, USE_CASE_PRODUCTS)
+    approved = [
+        k
+        for k in _kinetics_on(session, forward)
+        if _v(k.scientific_origin) == "computed"
+        and _review_status(session, SubmissionRecordType.kinetics, k.id) == RecordReviewStatus.approved.value
+    ]
+    rejected_ids = session.scalars(
+        select(RecordReview.record_id).where(
+            RecordReview.record_type == SubmissionRecordType.kinetics,
+            RecordReview.status == RecordReviewStatus.rejected,
+            RecordReview.first_approved_at.is_(None),
+        )
+    )
+    rejected = [session.get(Kinetics, i) for i in rejected_ids]
+    return {
+        "approved_records": sorted((_edit_trial(session, k, EDIT_STATEMENTS) for k in approved), key=content_key),
+        "control_rejected_records": sorted(
+            (_edit_trial(session, k, EDIT_STATEMENTS[:1]) for k in rejected if k is not None), key=content_key
+        ),
+        "expected_sqlstate_of_a_refusal": REFUSAL_SQLSTATE,
+        "note": (
+            "Each statement ran as the database owner inside a savepoint that was rolled back, so the snapshot is "
+            "unchanged. A refusal comes from the database's own trigger on records that have ever been approved; the "
+            "rejected records were never approved, so the same change to them is accepted and then rolled back."
         ),
     }
 

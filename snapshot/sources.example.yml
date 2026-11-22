@@ -100,9 +100,9 @@ sources:
 #     reject_note: Rejected because the transition state does not lie on the H-transfer path of this reaction.
 #     approve_note: Approved because the reactant and product records of this run are not affected by the transition-state finding.
 #   release:
-#     tag: snapshot-demo-1
+#     tag: demo-release-1
 #     title: "TCKDB demonstration release: CH4 + OH -> CH3 + H2O and CH3 thermochemistry"
-#     citation_text: TCKDB demonstration release snapshot-demo-1, made by the paper-snapshot build script.
+#     citation_text: TCKDB demonstration release demo-release-1, made by the paper build script.
 #     contact: curator@snapshot.invalid
 #     changelog_entry: First demonstration release of the snapshot build.
 #     policy:
@@ -125,6 +125,8 @@ sources:
 #         rationale: CH3 thermochemistry from the same ARC run, computed at the levels of its rate coefficient.
 #     source_terms:
 #       chemkin_formic_acid: Wu and Grinberg Dana, ACS Omega 2026, 11, 6371; published under CC BY 4.0.
+#   use_case:
+#     run: set_1/run_2
 
 # Optional: export the reaction of one ARC run as a CHEMKIN mechanism, as the curator (needs curation). The request names
 # that run's rate record and one of its thermo records per species; the files are loaded in Cantera. See README.md.

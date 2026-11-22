@@ -255,7 +255,7 @@ def test_the_generator_is_registered():
 
 def test_without_the_release_the_generator_says_unresolved_and_checks_nothing(db_session):
     out = chemkin_export.use_case_chemkin_export(db_session)
-    assert out["export"] == "unresolved" and "snapshot-demo-1" in out["reason"]
+    assert out["export"] == "unresolved" and "demo-release-1" in out["reason"]
 
 
 def test_the_analysis_names_species_hashes_files_and_compares_rate_and_h298(db_session, monkeypatch):
@@ -313,7 +313,7 @@ def test_saved_files_equal_the_in_process_export_apart_from_the_timestamp():
 
 
 def _release_with_the_use_case(db_session, entries, kinetics, thermo, decoys, *, publish=True, selected_ch3=None):
-    """A published release ``snapshot-demo-1`` selecting the rate record and the [CH3] thermo record; every record
+    """A published release ``demo-release-1`` selecting the rate record and the [CH3] thermo record; every record
     approved and deposited together by one submission, except ``decoys`` (another deposit's records)."""
     curator = AppUser(username="chemkin-export-curator", role=AppUserRole.curator)
     db_session.add(curator)

@@ -111,7 +111,7 @@ def test_the_scan_covers_generated_directories_and_requires_the_report(build, tm
     (tmp_path / "chemkin_export" / "chem.inp").write_text("ELEMENTS")
     (tmp_path / "tckdb.archive").write_text("tckdb.example.org")
     texts = build.output_texts(tmp_path, "{}")
-    assert sorted(texts) == ["build_report.json", "chemkin_export/chem.inp", "expected_outputs/x.json", "snapshot_record.json"]
+    assert sorted(texts) == ["build_record.json", "build_report.json", "chemkin_export/chem.inp", "expected_outputs/x.json"]
     assert build.leaks(texts, CONFIG) == ["expected_outputs/x.json"]
 
 
