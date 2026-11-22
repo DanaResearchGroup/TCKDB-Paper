@@ -26,16 +26,24 @@ git clone --recurse-submodules https://github.com/DanaResearchGroup/TCKDB-Paper.
 cd TCKDB-Paper
 ```
 
-Create TCKDB's backend environment and install the submodule's packages into it, the way CI does. Cantera 3.2.0 is
-part of the environment file.
+Create an environment for this repository from TCKDB's backend environment file and install the submodule's packages
+into it, the way CI does. Cantera 3.2.0 is part of the environment file. Use an environment of its own: the API writes
+the installed `tckdb-backend` and `tckdb-schemas` versions into every release manifest, so an environment holding
+another TCKDB checkout's install would misstate them. `snapshot/build.py` and `snapshot/instance.py up` refuse to run
+when the installed `tckdb-backend`, `tckdb-client` or `tckdb-schemas` is not the version the submodule declares, and
+`tests/test_pins.py` checks the same.
 
 ```bash
-conda env create -n tckdb_env -f tckdb/backend/environment.yml
-conda activate tckdb_env
+conda env create -n tckdb_paper_build -f tckdb/backend/environment.yml
+conda activate tckdb_paper_build
 python -m pip install -e tckdb/schemas/python/tckdb-schemas
 python -m pip install -e "tckdb/backend[dev]"
 python -m pip install -e tckdb/clients/python
+python -c "import importlib.metadata as m; print(*(m.version(d) for d in ('tckdb-backend', 'tckdb-schemas', 'tckdb-client')))"
 ```
+
+Run every command below in this environment. After moving the submodule to another commit, run the three installs
+again.
 
 The CHEMKIN and QCSchema adapters are not in TCKDB; they come from a git checkout of
 [tckdb-adapters](https://github.com/calvinp0/tckdb-adapters) at the commit in `pins.toml`, imported from source (no

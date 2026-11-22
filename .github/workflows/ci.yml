@@ -65,7 +65,7 @@ jobs:
           miniforge-version: latest
           use-mamba: true
           environment-file: tckdb/backend/environment.yml
-          activate-environment: tckdb_env
+          activate-environment: tckdb_paper_build
           auto-activate-base: false
 
       - name: Install the pinned TCKDB packages

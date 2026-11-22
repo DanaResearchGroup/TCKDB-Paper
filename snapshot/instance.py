@@ -7,6 +7,10 @@ on a local port. ``down --drop`` refuses names without the ``tckdb_test_`` prefi
     python snapshot/instance.py down --name a [--drop]
     python snapshot/instance.py restore --name c --archive snapshot/tckdb.archive
 
+Run it with the Python of the environment the README sets up (``tckdb_paper_build``): the API process and the
+migrations use this interpreter, and ``up`` refuses an environment whose installed ``tckdb-backend``, ``tckdb-client``
+or ``tckdb-schemas`` is not the submodule's version.
+
 Needs Postgres (``docker compose up -d db``) and an S3-compatible store at ``S3_ENDPOINT_URL`` (default
 ``http://localhost:9000``, credentials ``S3_ACCESS_KEY`` / ``S3_SECRET_KEY``). Process state lives under ``--work-dir``.
 """
@@ -22,6 +26,8 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+
+from versions import refuse_mismatched_install
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TCKDB_ROOT = REPO_ROOT / "tckdb"
@@ -74,13 +80,14 @@ def _s3(env: dict[str, str]):
 
 def up(name: str, port: int, work_dir: Path) -> None:
     env = _db_env(name)
+    refuse_mismatched_install("instance.py up", env, BACKEND)
     dbname = env["DB_NAME"]
     with _psql_connect(env) as conn:
         exists = conn.execute("select 1 from pg_database where datname = %s", (dbname,)).fetchone()
         if exists:
             raise SystemExit(f"database {dbname} already exists; run 'down --drop' first")
         conn.execute(f'create database "{dbname}"')
-    migrated = subprocess.run(["alembic", "upgrade", "head"], cwd=BACKEND, env=env, capture_output=True, text=True)
+    migrated = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND, env=env, capture_output=True, text=True)
     if migrated.returncode != 0:
         raise SystemExit(f"alembic upgrade head failed:\n{migrated.stdout}\n{migrated.stderr}")
     _s3(env).create_bucket(Bucket=env["S3_BUCKET"])

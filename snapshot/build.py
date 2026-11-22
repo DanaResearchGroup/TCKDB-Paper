@@ -51,6 +51,7 @@ import source_e2  # noqa: E402
 import source_pdep  # noqa: E402
 import use_case_export  # noqa: E402
 from common import ADAPTER_PACKAGES, Report, Session, adapter_package_paths  # noqa: E402
+from versions import installed_version_problems, refuse_mismatched_install  # noqa: E402
 
 #: Generators run for the snapshot.
 EXPECTED_OUTPUTS = (
@@ -278,6 +279,7 @@ def package_versions(adapters: Path) -> dict[str, Any]:
     }
     return {
         "declared_by_this_checkout": declared,
+        "installed_matches_this_checkout": not installed_version_problems(),
         "imported_from_this_checkout": not outside_checkout(),
         "declared_by_the_adapters_checkout": adapter_declared,
         "imported_from_the_adapters_checkout": not outside_adapters(adapters),
@@ -408,6 +410,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-nonempty", action="store_true", help="skip the empty-instance check (reruns only)")
     args = parser.parse_args(argv)
 
+    refuse_mismatched_install("the build")
     stray = outside_checkout()
     if stray:
         raise SystemExit(

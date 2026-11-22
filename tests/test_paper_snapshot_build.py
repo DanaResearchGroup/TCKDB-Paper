@@ -183,3 +183,39 @@ def test_the_check_guard_needs_a_declared_checkout_that_app_came_from(tmp_path):
     assert chemkin_export.tckdb_root_problem(app_file, tmp_path / "checkout") is None
     assert "outside the declared" in chemkin_export.tckdb_root_problem(app_file, tmp_path / "other")
     assert "no TCKDB checkout is declared" in chemkin_export.tckdb_root_problem(app_file, None)
+
+
+@pytest.fixture(scope="module")
+def versions():
+    sys.path.insert(0, str(SNAPSHOT_DIR))
+    try:
+        import versions as module
+
+        yield module
+    finally:
+        sys.path.remove(str(SNAPSHOT_DIR))
+
+
+def test_the_installed_tckdb_packages_are_the_submodules(versions):
+    assert versions.installed_version_problems() == []
+
+
+def test_a_mismatched_install_is_refused(versions, monkeypatch):
+    real = {name: versions.declared_version(path) for name, path in versions.DISTRIBUTIONS.items()}
+    monkeypatch.setattr(versions, "installed_versions", lambda env=None, cwd=None: {**real, "tckdb-backend": "0.2.0"})
+    problems = versions.installed_version_problems()
+    assert len(problems) == 1 and problems[0].startswith("tckdb-backend: installed 0.2.0")
+    with pytest.raises(SystemExit, match="the build refused"):
+        versions.refuse_mismatched_install("the build")
+    monkeypatch.setattr(versions, "installed_versions", lambda env=None, cwd=None: {})
+    assert len(versions.installed_version_problems()) == 3
+
+
+def test_the_version_check_is_not_fooled_by_the_source_tree(versions):
+    import os
+
+    egg_info_dirs = [str(p.parent) for p in versions.DISTRIBUTIONS.values()]
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(egg_info_dirs)}
+    isolated = versions.installed_versions()
+    on_path = versions.installed_versions(env, versions.TCKDB_ROOT / "backend")
+    assert sorted(isolated) == sorted(on_path) == sorted(versions.DISTRIBUTIONS)
