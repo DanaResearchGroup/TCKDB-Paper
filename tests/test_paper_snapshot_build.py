@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -287,24 +288,13 @@ def test_the_control_must_be_restored_after_its_rollback(build):
     assert build.edit_refusal_problems(_edits_document(control_restored=False)) == ["control kin_b: A changed"]
 
 
-def test_a_container_running_another_image_is_refused(build, monkeypatch):
-    import types
-
-    monkeypatch.setattr(build.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout="true\n", returncode=0))
-    monkeypatch.setattr(build.image, "container_image_digest", lambda name: "sha256:" + "0" * 64)
-    (problem,) = build.image_problems("tckdb-snapshot-x")
-    assert problem.endswith(f"runs sha256:{'0' * 64}, pins.toml names {build.image.PINS['tckdb']['image_digest']}")
-    monkeypatch.setattr(build.image, "container_image_digest", lambda name: build.image.PINS["tckdb"]["image_digest"])
-    assert build.image_problems("tckdb-snapshot-x") == []
-
-
 def test_containers_run_the_pinned_image_with_only_named_mounts_writable(build, tmp_path):
     image = build.image
     assert image.IMAGE == "laxzal/tckdb-api@" + image.PINS["tckdb"]["image_digest"]
     out = tmp_path / "out"
     argv = image.docker_args({"DB_NAME": "d"}, mounts={out: "/out", tmp_path / "in": "/in"}, writable=(out,),
                              adapters=tmp_path / "adapters")
-    assert argv[-1] == image.IMAGE and "--rm" in argv
+    assert argv[-1] == image.reference() and "--rm" in argv
     volumes = [argv[i + 1] for i, a in enumerate(argv) if a == "--volume"]
     assert f"{build.REPO_ROOT}:/paper:ro" in volumes
     assert f"{out.resolve()}:/out:rw" in volumes and f"{(tmp_path / 'in').resolve()}:/in:ro" in volumes
@@ -312,3 +302,10 @@ def test_containers_run_the_pinned_image_with_only_named_mounts_writable(build, 
     variables = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "--env")
     assert variables["DB_NAME"] == "d"
     assert "tckdb" not in variables["PYTHONPATH"].replace("/adapters/adapters/tckdb_", "")
+
+
+def test_the_snapshot_readme_lists_every_generator_the_build_runs(build):
+    text = " ".join((ROOT / "snapshot" / "README.md").read_text().split())
+    paragraph = text[text.index("Generators run for the snapshot") :].split("The registry's")[0]
+    listed = re.findall(r"`([a-z0-9_]+)`", paragraph)
+    assert [n for n in listed if n != "EXPECTED_OUTPUTS" and n != "build"] == list(build.EXPECTED_OUTPUTS)

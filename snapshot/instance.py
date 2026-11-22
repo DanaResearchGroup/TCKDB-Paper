@@ -53,28 +53,28 @@ def _db_env(name: str) -> dict[str, str]:
 def up(name: str, port: int, work_dir: Path) -> None:
     env = _db_env(name)
     dbname = env["DB_NAME"]
-    image.ensure_pulled()
+    reference = image.ensure_pulled()
     created = image.run(["python", "-m", "snapshot.instance_admin", "create"], env, check=False)
     if created.returncode != 0:
         raise SystemExit(f"could not create the database and bucket:\n{created.stdout}\n{created.stderr}")
     migrated = image.run(["alembic", "upgrade", "head"], env, check=False)
     if migrated.returncode != 0:
-        raise SystemExit(f"alembic upgrade head failed in {image.IMAGE}:\n{migrated.stdout}\n{migrated.stderr}")
+        raise SystemExit(f"alembic upgrade head failed in {reference}:\n{migrated.stdout}\n{migrated.stderr}")
     work_dir.mkdir(parents=True, exist_ok=True)
     container = container_name(name)
     image.start(
         ["uvicorn", "app.api.app:create_app", "--factory", "--host", "127.0.0.1", "--port", str(port)], env, container
     )
-    digest = image.container_image_digest(container)
+    running = image.container_image(container)
     (work_dir / f"instance_{name}.json").write_text(
-        json.dumps({"container": container, "port": port, "db": dbname, "image": image.IMAGE, "image_digest": digest})
+        json.dumps({"container": container, "port": port, "db": dbname, "image": reference, "image_run": running})
     )
     for _ in range(120):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/status", timeout=2) as response:
                 if response.status == 200:
                     print(f"instance {name}: http://127.0.0.1:{port}  db={dbname}  bucket={env['S3_BUCKET']}  "
-                          f"image={image.IMAGE}")
+                          f"image={reference} ({(running or {}).get('pinned_as')})")
                     return
         except OSError:
             time.sleep(1)

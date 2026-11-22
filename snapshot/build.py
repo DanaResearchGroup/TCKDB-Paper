@@ -173,16 +173,43 @@ def api_container(instance: dict[str, Any]) -> str:
 
 
 def image_problems(container: str) -> list[str]:
-    """The API container is running the image ``pins.toml`` names, by digest."""
+    """The API container is running, and runs the image ``pins.toml`` names (by its index digest, or the manifest or
+    config digest of a pinned platform)."""
     if not container:
         return ["no API container is named: set instance.container, or use an instance made by instance.py"]
     running = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", container], capture_output=True, text=True)
     if running.stdout.strip() != "true":
         return [f"the API container {container} is not running"]
-    digest = image.container_image_digest(container)
-    if digest != image.PINS["tckdb"]["image_digest"]:
-        return [f"the API container {container} runs {digest}, pins.toml names {image.PINS['tckdb']['image_digest']}"]
+    found = image.container_image(container)
+    if not found or not found["pinned_as"]:
+        return [f"the API container {container} runs {found and found['id']}, not the image pins.toml names "
+                f"({image.PINS['tckdb']['image_digest']} or a pinned platform image)"]
     return []
+
+
+LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def served_by_problems(container: str, api_url: str, reported_revision: str | None, image_revision: str | None) -> list[str]:
+    """The server at ``api_url`` is the API container: a loopback address, the container's ``--port``, and the
+    database revision the server reports equal to the migration head of the pinned image."""
+    from urllib.parse import urlparse
+
+    url = urlparse(api_url)
+    port = url.port or (443 if url.scheme == "https" else 80)
+    problems = []
+    if url.hostname not in LOOPBACK:
+        problems.append(f"instance.api_url {api_url} is not a loopback address; the API container serves 127.0.0.1")
+    args = subprocess.run(["docker", "inspect", "--format", "{{json .Args}}", container], capture_output=True, text=True)
+    argv = json.loads(args.stdout) if args.returncode == 0 and args.stdout.strip() else []
+    if "--port" not in argv or argv[argv.index("--port") + 1 : argv.index("--port") + 2] != [str(port)]:
+        problems.append(f"the API container {container} does not serve port {port} of instance.api_url (its arguments: {argv})")
+    if not image_revision or reported_revision != image_revision:
+        problems.append(
+            f"the server at {api_url} reports database revision {reported_revision}; the pinned image's migration "
+            f"head is {image_revision}"
+        )
+    return problems
 
 
 def curation_problems(config: dict[str, Any]) -> list[str]:
@@ -514,6 +541,11 @@ def main(argv: list[str] | None = None) -> int:
 
     session = Session(base_url)
     status = session.health()
+    reported = status["components"]["database"]["alembic_revision"]
+    heads = image.run(["alembic", "heads"], {}).stdout.split()
+    problems = served_by_problems(container, base_url, reported, heads[0] if heads else None)
+    if problems:
+        raise SystemExit("the build refused: " + "; ".join(problems))
     print(f"instance {session.base}: status={status.get('status')} revision={status['components']['database']['alembic_revision']}")
     if not args.allow_nonempty:
         assert_empty(db_env)
@@ -616,7 +648,8 @@ def main(argv: list[str] | None = None) -> int:
         "packages": package_versions(adapters),
         "tckdb_image": {
             "image": image.IMAGE,
-            "api_container_image_digest": image.container_image_digest(container),
+            "reference_run": image.reference(),
+            "api_container_image": image.container_image(container),
             "inside": image.image_versions(db_env),
         },
         "sources": source_records(config, report),
@@ -625,8 +658,8 @@ def main(argv: list[str] | None = None) -> int:
         "built_at_unix": int(started),
         "wall_seconds": round(time.time() - started, 1),
     }
-    if record["tckdb_image"]["api_container_image_digest"] != image.PINS["tckdb"]["image_digest"]:
-        raise SystemExit(f"the API container ran {record['tckdb_image']['api_container_image_digest']}, not the pinned image")
+    if not (record["tckdb_image"]["api_container_image"] or {}).get("pinned_as"):
+        raise SystemExit(f"the API container ran {record['tckdb_image']['api_container_image']}, not the pinned image")
     record_text = json.dumps(record, indent=2, sort_keys=True, default=str) + "\n"
     (out_dir / "build_record.json").write_text(record_text)
     leaked = leaks(output_texts(out_dir, record_text), config)

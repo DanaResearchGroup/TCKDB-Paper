@@ -9,6 +9,15 @@ image_digest = "sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec
 image_version_tag = "laxzal/tckdb-api:0.4.0"
 image_version_tag_digest = "sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec4cfdfba"
 
+# The platform images behind image_digest (a multi-platform index): manifest and config digests per platform.
+[tckdb.image_platforms."linux/amd64"]
+manifest = "sha256:7c933a9aa6ff92e325b9f535a7defa32e4eacb79498dbd34dd75bf43562fb602"
+config = "sha256:e6fdbe0abd8e657ef97d3ad7a4eb0fcce1e5a76db8c766e7428b7a6886fb595a"
+
+[tckdb.image_platforms."linux/arm64"]
+manifest = "sha256:6f596e9b71d884f2ccd3667c3e64d4f4173255f4b25cbc077ff0dbc848910887"
+config = "sha256:345f6f59781fe1afa52085af052168e5c66e7ab56471e3157745af8f18a63fb1"
+
 # Package versions declared by the pinned TCKDB commit.
 [tckdb.packages]
 tckdb-client = "0.211.0"
