@@ -10,7 +10,7 @@ Steps:
 4. create a curator and curate: approval, the caught error, the release (a demonstration, recorded as such);
 5. export the use case as a CHEMKIN mechanism as the curator (``chemkin_export`` in the sources file);
 6. export the archive and the expected outputs; the CHEMKIN output must show the files loaded in Cantera;
-7. write ``build_report.json`` (warnings and refusals by code) and ``snapshot_record.json``.
+7. write ``build_report.json`` (warnings and refusals by code) and ``build_record.json``.
 """
 
 from __future__ import annotations
@@ -23,20 +23,22 @@ import re
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 TCKDB_ROOT = REPO_ROOT / "tckdb"
+#: What the build imports on the host: the submodule's client and schemas (it talks to the instance over HTTP only) and
+#: this repository. TCKDB's backend is not on the host's path; everything that imports it runs in the pinned image.
 PACKAGE_PATHS = [
     TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
     TCKDB_ROOT / "clients" / "python" / "src",
-    TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
-    TCKDB_ROOT / "backend",
     REPO_ROOT,
 ]
-# This checkout's packages come first on the path.
+# This checkout's packages come first on the path. The adapters' are added from ``adapter_path`` once the sources file
+# is read.
 for _path in reversed([HERE, *PACKAGE_PATHS]):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
@@ -45,12 +47,14 @@ import yaml  # noqa: E402
 
 import curation  # noqa: E402
 import export  # noqa: E402
+import image  # noqa: E402
 import source_arc  # noqa: E402
 import source_chemkin  # noqa: E402
 import source_e2  # noqa: E402
 import source_pdep  # noqa: E402
 import use_case_export  # noqa: E402
-from common import Report, Session  # noqa: E402
+from common import ADAPTER_PACKAGES, Report, Session, adapter_package_paths  # noqa: E402
+from versions import installed_version_problems  # noqa: E402
 
 #: Generators run for the snapshot.
 EXPECTED_OUTPUTS = (
@@ -67,6 +71,7 @@ EXPECTED_OUTPUTS = (
     "candidate_lineage",
     "transition_state_evidence",
     "use_case_ch4_oh",
+    "approved_record_edits",
     "use_case_chemkin_export",
     "ch3_enthalpy_of_formation",
     "network_n2h3",
@@ -76,9 +81,11 @@ EXPECTED_OUTPUTS = (
     "dataset_release",
 )
 
-#: Config keys holding local paths or host names; omitted from ``snapshot_record.json``.
+#: Config keys holding local paths or host names; omitted from ``build_record.json``.
 PATH_KEYS = frozenset({"root", "fixture_dir", "adapter_path", "arc_path", "runs_root", "arkane_dir", "recorded_hosts"})
-TOP_LEVEL_KEYS = frozenset({"instance", "sources", "accounts", "expected_outputs", "curation", "chemkin_export"})
+TOP_LEVEL_KEYS = frozenset(
+    {"instance", "adapter_path", "sources", "accounts", "expected_outputs", "curation", "chemkin_export"}
+)
 
 #: Deposit order.
 SOURCES = (
@@ -93,6 +100,9 @@ def load_config(path: Path) -> dict[str, Any]:
     config = yaml.safe_load(path.read_text()) or {}
     config.setdefault("instance", {})
     config.setdefault("sources", {})
+    arc = (config["sources"] or {}).get("arc_runs")
+    if isinstance(arc, dict) and config.get("adapter_path") and not arc.get("adapter_path"):
+        arc["adapter_path"] = config["adapter_path"]  # the ARC adapter comes from the same checkout
     return config
 
 
@@ -102,12 +112,115 @@ def registered_generators() -> set[str]:
     return set(re.findall(r'^\s+"([a-z0-9_]+)":\s', text, flags=re.MULTILINE))
 
 
+def adapters_checkout(config: dict[str, Any]) -> Path:
+    return Path(str(config.get("adapter_path") or "")).expanduser()
+
+
+def adapter_problems(config: dict[str, Any]) -> list[str]:
+    """``adapter_path`` names a git checkout of tckdb-adapters, and the ARC source names the same one."""
+    if not config.get("adapter_path"):
+        return ["'adapter_path' (a git checkout of tckdb-adapters, for the CHEMKIN and QCSchema adapters) is required"]
+    root = adapters_checkout(config)
+    missing = [p for p in adapter_package_paths(root) if not (p / p.name).is_dir()]
+    if missing:
+        names = ", ".join(p.relative_to(root).as_posix() + "/" + p.name for p in missing)
+        return [f"'adapter_path' must be a tckdb-adapters checkout ({names} not found)"]
+    if source_arc.checkout_commit(root) is None:
+        return ["'adapter_path' must be a git checkout of tckdb-adapters, so its commit can be recorded"]
+    arc = (config.get("sources") or {}).get("arc_runs") or {}
+    if arc.get("enabled", True) and arc.get("adapter_path"):
+        if Path(str(arc["adapter_path"])).expanduser().resolve() != root.resolve():
+            return ["sources.arc_runs.adapter_path must name the same tckdb-adapters checkout as 'adapter_path'"]
+    return []
+
+
+def submodule_commit() -> str:
+    return subprocess.run(["git", "-C", str(TCKDB_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def pin_problems(config: dict[str, Any], pins: dict[str, Any] | None = None) -> list[str]:
+    """The ``tckdb/`` submodule and the tckdb-adapters checkout are at the commits ``pins.toml`` names."""
+    pins = pins or tomllib.loads((REPO_ROOT / "pins.toml").read_text())
+    problems = []
+    head = submodule_commit()
+    if head != pins["tckdb"]["commit"]:
+        problems.append(f"the tckdb/ submodule is at {head}, pins.toml names {pins['tckdb']['commit']}")
+    if config.get("adapter_path"):
+        commit = source_arc.checkout_commit(adapters_checkout(config))
+        if commit is not None and commit != pins["tckdb_adapters"]["commit"]:
+            problems.append(
+                f"the tckdb-adapters checkout is at {commit}, pins.toml names {pins['tckdb_adapters']['commit']}"
+            )
+    return problems
+
+
+#: The distributions the build imports on the host; ``tckdb_client`` sends its installed version with every request.
+HOST_DISTRIBUTIONS = ("tckdb-client", "tckdb-schemas")
+
+
+def install_problems() -> list[str]:
+    """Installed host versions of the client and schemas that differ from the submodule's."""
+    return installed_version_problems(names=HOST_DISTRIBUTIONS)
+
+
+def api_container(instance: dict[str, Any]) -> str:
+    """The API container of the instance: ``instance.container``, else the name ``instance.py`` gives it."""
+    if instance.get("container"):
+        return str(instance["container"])
+    name = str((instance.get("database") or {}).get("name") or "")
+    prefix = "tckdb_test_snapshot_"
+    return "tckdb-snapshot-" + name[len(prefix):] if name.startswith(prefix) else ""
+
+
+def image_problems(container: str) -> list[str]:
+    """The API container is running, and runs the image ``pins.toml`` names (by its index digest, or the manifest or
+    config digest of a pinned platform)."""
+    if not container:
+        return ["no API container is named: set instance.container, or use an instance made by instance.py"]
+    running = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", container], capture_output=True, text=True)
+    if running.stdout.strip() != "true":
+        return [f"the API container {container} is not running"]
+    found = image.container_image(container)
+    if not found or not found["pinned_as"]:
+        return [f"the API container {container} runs {found and found['id']}, not the image pins.toml names "
+                f"({image.PINS['tckdb']['image_digest']} or a pinned platform image)"]
+    return []
+
+
+LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def served_by_problems(container: str, api_url: str, reported_revision: str | None, image_revision: str | None) -> list[str]:
+    """The server at ``api_url`` is the API container: a loopback address, the container's ``--port``, and the
+    database revision the server reports equal to the migration head of the pinned image."""
+    from urllib.parse import urlparse
+
+    url = urlparse(api_url)
+    port = url.port or (443 if url.scheme == "https" else 80)
+    problems = []
+    if url.hostname not in LOOPBACK:
+        problems.append(f"instance.api_url {api_url} is not a loopback address; the API container serves 127.0.0.1")
+    args = subprocess.run(["docker", "inspect", "--format", "{{json .Args}}", container], capture_output=True, text=True)
+    argv = json.loads(args.stdout) if args.returncode == 0 and args.stdout.strip() else []
+    if "--port" not in argv or argv[argv.index("--port") + 1 : argv.index("--port") + 2] != [str(port)]:
+        problems.append(f"the API container {container} does not serve port {port} of instance.api_url (its arguments: {argv})")
+    if not image_revision or reported_revision != image_revision:
+        problems.append(
+            f"the server at {api_url} reports database revision {reported_revision}; the pinned image's migration "
+            f"head is {image_revision}"
+        )
+    return problems
+
+
 def curation_problems(config: dict[str, Any]) -> list[str]:
     """The curation plan names only deposited ARC runs and states every text it writes."""
     plan = config.get("curation") or {}
     arc = (config.get("sources") or {}).get("arc_runs") or {}
     runs = set(arc.get("runs") or []) if arc.get("enabled", True) else set()
-    problems = [f"curation: unknown key {k!r}" for k in sorted(set(plan) - {"caught_error", "release"})]
+    problems = [f"curation: unknown key {k!r}" for k in sorted(set(plan) - {"caught_error", "release", "use_case"})]
+    use_case = plan.get("use_case")
+    if use_case is not None and (use_case or {}).get("run") not in runs:
+        problems.append(f"curation.use_case: run {(use_case or {}).get('run')!r} is not in sources.arc_runs.runs")
     caught = plan.get("caught_error")
     if caught:
         if caught.get("run") not in runs:
@@ -129,9 +242,42 @@ def curation_problems(config: dict[str, Any]) -> list[str]:
     return problems
 
 
+EDITS_OUTPUT = "approved_record_edits"
+#: SQLSTATE of the refusal the database's immutability trigger raises (``object_not_in_prerequisite_state``).
+REFUSAL_SQLSTATE = "55000"
+
+
+def edit_refusal_problems(document: dict[str, Any]) -> list[str]:
+    """What the edits output fails to show: every attempt on an approved record refused by the database's trigger, the
+    value unchanged, and the same change accepted on at least one never-approved record (so the refusal is the
+    approval's doing, not a read-only session's)."""
+    out: list[str] = []
+    approved = document.get("approved_records") or []
+    controls = document.get("control_rejected_records") or []
+    if not approved:
+        out.append("no approved computed rate record of the use case was tried")
+    if not controls:
+        out.append("no rejected rate record was tried as the control")
+    for row in approved:
+        for attempt in row["attempts"]:
+            if not attempt.get("refused") or attempt.get("sqlstate") != REFUSAL_SQLSTATE or "is immutable" not in (attempt.get("message") or ""):
+                out.append(f"{row['kinetics_ref']}: {attempt['attempt']} was not refused as immutable: {attempt}")
+        if not row.get("a_after_rollback_equals_a_before"):
+            out.append(f"{row['kinetics_ref']}: A changed")
+    for row in controls:
+        for attempt in row["attempts"]:
+            if attempt.get("refused") or attempt.get("rows_affected") != 1:
+                out.append(f"control {row['kinetics_ref']}: {attempt['attempt']} was not accepted: {attempt}")
+        if not row.get("a_after_rollback_equals_a_before"):
+            out.append(f"control {row['kinetics_ref']}: A changed")
+    return out
+
+
 def validate_config(config: dict[str, Any]) -> list[str]:
     """Return the problems in the whole config, enabled stub sources included."""
     problems = [f"unknown top-level key {k!r}" for k in sorted(set(config) - TOP_LEVEL_KEYS)]
+    problems += adapter_problems(config)
+    problems += pin_problems(config)
     known = {name for name, _ in SOURCES}
     sources = config.get("sources") or {}
     problems += [f"unknown source {k!r}; known: {sorted(known)}" for k in sorted(set(sources) - known)]
@@ -184,7 +330,7 @@ def assert_empty(env: dict[str, str]) -> None:
         print(f"note: {counts['app_user']} account(s) already exist; they will be reused by name or the build will stop", file=sys.stderr)
 
 
-def git_commit() -> dict[str, Any]:
+def git_commit(adapters: Path) -> dict[str, Any]:
     def run(*argv: str) -> str:
         return subprocess.run(["git", *argv], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
 
@@ -192,40 +338,64 @@ def git_commit() -> dict[str, Any]:
         "commit": run("rev-parse", "HEAD"),
         "dirty_tracked_files": len(run("status", "--porcelain", "--untracked-files=no").splitlines()),
         "tckdb_commit": run("-C", "tckdb", "rev-parse", "HEAD"),
+        "tckdb_adapters_commit": source_arc.checkout_commit(adapters),
     }
 
 
-def package_versions() -> dict[str, Any]:
-    """Versions declared by this checkout's pyproject files, and whether the build imported them from here.
+def _declared_version(path: Path) -> str:
+    match = re.search(r'^version\s*=\s*"([^"]+)"', path.read_text(), flags=re.MULTILINE)
+    return match.group(1) if match else "unknown"
+
+
+def package_versions(adapters: Path) -> dict[str, Any]:
+    """Versions declared by the pyproject files of the submodule and the adapters checkout, and whether the build
+    imported the packages from there.
 
     Installed-distribution metadata can describe another checkout (an editable install made elsewhere), so the
     declared version comes from the files and the import location is checked separately.
     """
-    declared = {}
-    for name, path in (
-        ("tckdb-client", TCKDB_ROOT / "clients" / "python" / "pyproject.toml"),
-        ("tckdb-chemkin", TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin" / "pyproject.toml"),
-        ("tckdb-schemas", TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas" / "pyproject.toml"),
-    ):
-        match = re.search(r'^version\s*=\s*"([^"]+)"', path.read_text(), flags=re.MULTILINE)
-        declared[name] = match.group(1) if match else "unknown"
-    return {"declared_by_this_checkout": declared, "imported_from_this_checkout": not outside_checkout()}
+    declared = {
+        "tckdb-client": _declared_version(TCKDB_ROOT / "clients" / "python" / "pyproject.toml"),
+        "tckdb-schemas": _declared_version(TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas" / "pyproject.toml"),
+    }
+    adapter_declared = {
+        path.name.replace("_", "-"): _declared_version(path / "pyproject.toml")
+        for path in adapter_package_paths(adapters)
+    }
+    return {
+        "declared_by_this_checkout": declared,
+        "installed_matches_this_checkout": not install_problems(),
+        "imported_from_this_checkout": not outside_checkout(),
+        "declared_by_the_adapters_checkout": adapter_declared,
+        "imported_from_the_adapters_checkout": not outside_adapters(adapters),
+    }
 
 
 def outside_checkout() -> dict[str, str]:
     """The TCKDB packages this process imported from outside the ``tckdb/`` submodule, by name."""
-    import app
-    import tckdb_chemkin
     import tckdb_client
     import tckdb_schemas
 
     root = TCKDB_ROOT.resolve()
-    modules = {"app": app, "tckdb_chemkin": tckdb_chemkin, "tckdb_client": tckdb_client, "tckdb_schemas": tckdb_schemas}
+    modules = {"tckdb_client": tckdb_client, "tckdb_schemas": tckdb_schemas}
     return {
         name: str(Path(module.__file__).resolve())
         for name, module in modules.items()
         if root not in Path(module.__file__).resolve().parents
     }
+
+
+def outside_adapters(adapters: Path) -> dict[str, str]:
+    """The adapter packages this process imports from outside the tckdb-adapters checkout, by name."""
+    import importlib
+
+    root = adapters.resolve()
+    found = {}
+    for name in ADAPTER_PACKAGES:
+        origin = Path(importlib.import_module(name).__file__).resolve()
+        if root not in origin.parents:
+            found[name] = str(origin)
+    return found
 
 
 def public_options(entry: dict[str, Any]) -> dict[str, Any]:
@@ -250,7 +420,7 @@ def private_values(config: dict[str, Any]) -> list[str]:
     is always included.
     """
     found: set[str] = {str(Path.home())}
-    for entry in (config.get("sources") or {}).values():
+    for entry in [{"adapter_path": config.get("adapter_path")}, *(config.get("sources") or {}).values()]:
         for key in PATH_KEYS:
             value = (entry or {}).get(key)
             for item in value if isinstance(value, list) else [value]:
@@ -279,7 +449,7 @@ def output_texts(out_dir: Path, record_text: str) -> dict[str, str]:
     report = out_dir / "build_report.json"
     if not report.is_file():
         raise SystemExit(f"{report} is missing; the build cannot show its outputs are free of local paths and hosts")
-    texts = {"snapshot_record.json": record_text}
+    texts = {"build_record.json": record_text}
     for path in [report, *sorted(p for d in ("expected_outputs", "chemkin_export") for p in (out_dir / d).rglob("*") if p.is_file())]:
         texts[path.relative_to(out_dir).as_posix()] = path.read_text(encoding="utf-8", errors="replace")
     return texts
@@ -338,11 +508,31 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(f"  - {problem}", file=sys.stderr)
         return 2
+    adapters = adapters_checkout(config)
+    for _path in reversed(adapter_package_paths(adapters)):
+        sys.path.insert(0, str(_path))
+    problems = install_problems()
+    if problems:
+        raise SystemExit(
+            "the build refused: the installed tckdb-client or tckdb-schemas is not the submodule's:\n  - "
+            + "\n  - ".join(problems) + "\ninstall the submodule's packages into this environment (README.md, 'Set up')"
+        )
+    stray = outside_adapters(adapters)
+    if stray:
+        raise SystemExit(
+            "these packages resolve outside the tckdb-adapters checkout named by 'adapter_path': "
+            + ", ".join(f"{name} ({path})" for name, path in sorted(stray.items()))
+        )
     instance = config["instance"]
+    container = api_container(instance)
+    problems = image_problems(container)
+    if problems:
+        raise SystemExit("the build refused: " + "; ".join(problems))
     base_url = instance.get("api_url", "http://127.0.0.1:8010")
     out_dir = (args.out_dir or args.work_dir / "snapshot").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     db_env = database_env(instance)
+    image.context.update(env=db_env, adapters=adapters)
     accounts = config.get("accounts") or {}
     depositor = {"username": "snapshot_depositor", "password": "snapshot-depositor-pass", "email": "depositor@snapshot.invalid",
                  "full_name": "Snapshot build depositor", **(accounts.get("depositor") or {})}
@@ -351,6 +541,11 @@ def main(argv: list[str] | None = None) -> int:
 
     session = Session(base_url)
     status = session.health()
+    reported = status["components"]["database"]["alembic_revision"]
+    heads = image.run(["alembic", "heads"], {}).stdout.split()
+    problems = served_by_problems(container, base_url, reported, heads[0] if heads else None)
+    if problems:
+        raise SystemExit("the build refused: " + "; ".join(problems))
     print(f"instance {session.base}: status={status.get('status')} revision={status['components']['database']['alembic_revision']}")
     if not args.allow_nonempty:
         assert_empty(db_env)
@@ -394,7 +589,7 @@ def main(argv: list[str] | None = None) -> int:
                           f"{len(approval['caught_error']['approved'])} approved")
                 if plan.get("release"):
                     approval["release"] = curation.cut_release(
-                        reviewer, report, plan["release"], export.subprocess_env(db_env, PACKAGE_PATHS)
+                        reviewer, report, plan["release"], db_env
                     )
                     print(f"[curation] release {plan['release']['tag']} published")
                 if config.get("chemkin_export"):
@@ -402,11 +597,20 @@ def main(argv: list[str] | None = None) -> int:
                         reviewer, report, config["chemkin_export"], out_dir, approval.get("release")
                     )
                     print(f"[chemkin_export] {sorted(approval['chemkin_export']['files'])} written")
+                if plan.get("use_case"):
+                    run = plan["use_case"]["run"]
+                    approval["use_case_grades"] = curation.grade_use_case(reviewer, report, run)
+                    approval["approved_calculation_file_refused"] = curation.add_file_to_approved_calculation(
+                        session, reviewer, report, run
+                    )
+                    print(f"[curation] {run}: {len(approval['use_case_grades']['graded'])} records graded; "
+                          f"adding a file to an approved calculation answered "
+                          f"{approval['approved_calculation_file_refused']['status_code']}")
             finally:
                 reviewer.close()
 
         if not args.skip_export:
-            env = export.subprocess_env(db_env, PACKAGE_PATHS)
+            env = db_env
             archive = out_dir / "tckdb.archive"
             print("[export] archive ...")
             written = export.create_archive(archive, env).strip().splitlines()
@@ -415,7 +619,7 @@ def main(argv: list[str] | None = None) -> int:
             exports["archive_verify"] = [ln for ln in verified if not ln.startswith("Checked ")]
             print("[export] expected outputs ...")
             wanted = list(config.get("expected_outputs") or EXPECTED_OUTPUTS)
-            printed = export.expected_outputs(out_dir / "expected_outputs", env, only=wanted).splitlines()
+            printed = export.expected_outputs(out_dir / "expected_outputs", env, adapters, only=wanted).splitlines()
             if config.get("chemkin_export"):
                 if use_case_export.OUTPUT_NAME not in wanted:
                     raise SystemExit(f"chemkin_export is configured but expected_outputs does not list {use_case_export.OUTPUT_NAME}")
@@ -426,23 +630,38 @@ def main(argv: list[str] | None = None) -> int:
                 exports["chemkin_export_saved_files_vs_in_process_export"] = use_case_export.check_saved(
                     out_dir / use_case_export.DIRECTORY, env
                 )
+            if EDITS_OUTPUT in wanted:
+                refused = edit_refusal_problems(json.loads((out_dir / "expected_outputs" / f"{EDITS_OUTPUT}.json").read_text()))
+                if refused:
+                    raise SystemExit("the refusal of edits to approved records is not shown:\n  - " + "\n  - ".join(refused))
             exports["expected_outputs"] = [ln for ln in printed if re.match(r"^[0-9a-f]{64}  ", ln)]
             exports["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+            print("[export] image ...")
+            version = image.PINS["tckdb"]["image_version_tag"].rsplit(":", 1)[1]
+            exports["image"] = image.save(out_dir / f"tckdb-api-{version}.tar.gz")
 
     finally:
         report.write(out_dir / "build_report.json")
     record = {
         "snapshot": "TCKDB paper demonstration snapshot",
-        "source_commit": git_commit(),
-        "packages": package_versions(),
+        "source_commit": git_commit(adapters),
+        "packages": package_versions(adapters),
+        "tckdb_image": {
+            "image": image.IMAGE,
+            "reference_run": image.reference(),
+            "api_container_image": image.container_image(container),
+            "inside": image.image_versions(db_env),
+        },
         "sources": source_records(config, report),
         "approval": approval,
         "exports": exports,
         "built_at_unix": int(started),
         "wall_seconds": round(time.time() - started, 1),
     }
+    if not (record["tckdb_image"]["api_container_image"] or {}).get("pinned_as"):
+        raise SystemExit(f"the API container ran {record['tckdb_image']['api_container_image']}, not the pinned image")
     record_text = json.dumps(record, indent=2, sort_keys=True, default=str) + "\n"
-    (out_dir / "snapshot_record.json").write_text(record_text)
+    (out_dir / "build_record.json").write_text(record_text)
     leaked = leaks(output_texts(out_dir, record_text), config)
     if leaked:
         withheld = withhold(out_dir, leaked)

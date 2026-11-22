@@ -1,55 +1,38 @@
 """Archive and expected-output export from the finished instance.
 
-Runs ``backend/scripts/tckdb_archive.py`` and ``backend/scripts/ops/generate_expected_outputs.py`` as subprocesses
-against the instance's database.
+Runs ``backend/scripts/tckdb_archive.py`` and ``backend/scripts/ops/generate_expected_outputs.py`` in the pinned
+TCKDB image (``image.py``) against the instance's database. The generators are this repository's
+``tckdb_paper_generators``, mounted read-only; the output directory is the only writable mount.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from pathlib import Path
 
-from common import TCKDB_ROOT
-
-
-def _run(argv: list[str], env: dict[str, str]) -> str:
-    done = subprocess.run(argv, cwd=TCKDB_ROOT / "backend", env=env, capture_output=True, text=True)
-    if done.returncode != 0:
-        raise RuntimeError(f"{' '.join(argv)} failed ({done.returncode}):\n{done.stdout}\n{done.stderr}")
-    return done.stdout
-
-
-def subprocess_env(db_env: dict[str, str], package_paths: list[Path]) -> dict[str, str]:
-    env = dict(os.environ)
-    env.update(db_env)
-    env["PYTHONPATH"] = os.pathsep.join(str(p) for p in package_paths)
-    return env
+import image
 
 
 def create_archive(out: Path, env: dict[str, str]) -> str:
-    return _run([sys.executable, "scripts/tckdb_archive.py", "create", str(out), "--overwrite"], env)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    argv = ["python", "scripts/tckdb_archive.py", "create", f"/out/{out.name}", "--overwrite"]
+    return image.run(argv, env, mounts={out.parent: "/out"}, writable=(out.parent,)).stdout
 
 
 def verify_archive(path: Path, env: dict[str, str]) -> str:
-    return _run([sys.executable, "scripts/tckdb_archive.py", "verify", str(path)], env)
+    argv = ["python", "scripts/tckdb_archive.py", "verify", f"/out/{path.name}"]
+    return image.run(argv, env, mounts={path.parent: "/out"}).stdout
 
 
-def restore_archive(path: Path, env: dict[str, str]) -> str:
-    return _run([sys.executable, "scripts/tckdb_archive.py", "restore", str(path)], env)
-
-
-def expected_outputs(out_dir: Path, env: dict[str, str], only: list[str] | None = None) -> str:
+def expected_outputs(out_dir: Path, env: dict[str, str], adapters: Path, only: list[str] | None = None) -> str:
+    out_dir.mkdir(parents=True, exist_ok=True)
     argv = [
-        sys.executable,
+        "python",
         "scripts/ops/generate_expected_outputs.py",
         "--generators",
         "tckdb_paper_generators.registry:GENERATORS",
         "--output-dir",
-        str(out_dir),
+        "/expected",
     ]
     for name in only or []:
         argv += ["--only", name]
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return _run(argv, env)
+    return image.run(argv, env, mounts={out_dir: "/expected"}, writable=(out_dir,), adapters=adapters).stdout

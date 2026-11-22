@@ -41,8 +41,8 @@ def _git_checkout(path: Path) -> None:
 
 
 def _config(tmp_path: Path, runs: list[str], *, git: bool = True) -> dict:
-    adapter = tmp_path / "adapters"
-    (adapter / "tckdb_arc" / "tckdb_arc").mkdir(parents=True)
+    adapter = tmp_path / "tckdb-adapters"
+    (adapter / "adapters" / "tckdb_arc" / "tckdb_arc").mkdir(parents=True)
     if git:
         _git_checkout(adapter)
     return {

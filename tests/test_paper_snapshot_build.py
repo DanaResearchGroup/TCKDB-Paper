@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -80,15 +81,65 @@ def test_a_checkout_commit_is_its_head(source_arc):
 def test_a_package_outside_the_submodule_is_reported(build, monkeypatch, tmp_path):
     import types
 
-    outside = tmp_path / "elsewhere" / "app" / "__init__.py"
+    outside = tmp_path / "elsewhere" / "tckdb_client" / "__init__.py"
     outside.parent.mkdir(parents=True)
     outside.write_text("")
-    fake = types.ModuleType("app")
+    fake = types.ModuleType("tckdb_client")
     fake.__file__ = str(outside)
-    monkeypatch.setitem(sys.modules, "app", fake)
-    assert build.outside_checkout() == {"app": str(outside.resolve())}
+    monkeypatch.setitem(sys.modules, "tckdb_client", fake)
+    assert build.outside_checkout() == {"tckdb_client": str(outside.resolve())}
     monkeypatch.undo()
     assert build.outside_checkout() == {}
+
+
+def _adapters_checkout(path: Path, *, git: bool = True) -> Path:
+    for name in ("tckdb_chemkin", "tckdb_qcschema"):
+        (path / "adapters" / name / name).mkdir(parents=True)
+    if git:
+        git_cmd = ["git", "-C", str(path), "-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+        subprocess.run([*git_cmd, "init", "-q"], check=True)
+        subprocess.run([*git_cmd, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+    return path
+
+
+def test_the_adapters_checkout_is_required_and_must_be_recordable(build, tmp_path):
+    assert "'adapter_path'" in build.adapter_problems({"sources": {}})[0]
+    assert "tckdb_chemkin" in build.adapter_problems({"adapter_path": str(tmp_path / "empty")})[0]
+    plain = _adapters_checkout(tmp_path / "plain", git=False)
+    assert "git checkout" in build.adapter_problems({"adapter_path": str(plain)})[0]
+    checkout = _adapters_checkout(tmp_path / "checkout")
+    assert build.adapter_problems({"adapter_path": str(checkout)}) == []
+
+
+def test_the_arc_source_must_use_the_same_adapters_checkout(build, tmp_path):
+    checkout = _adapters_checkout(tmp_path / "checkout")
+    other = _adapters_checkout(tmp_path / "other")
+    same = {"adapter_path": str(checkout), "sources": {"arc_runs": {"adapter_path": str(checkout)}}}
+    assert build.adapter_problems(same) == []
+    differ = {"adapter_path": str(checkout), "sources": {"arc_runs": {"adapter_path": str(other)}}}
+    assert "same tckdb-adapters checkout" in build.adapter_problems(differ)[0]
+
+
+def test_the_arc_source_defaults_to_the_adapters_checkout(build, tmp_path):
+    sources = tmp_path / "sources.yml"
+    sources.write_text("adapter_path: /a/tckdb-adapters\nsources:\n  arc_runs: {enabled: true}\n")
+    assert build.load_config(sources)["sources"]["arc_runs"]["adapter_path"] == "/a/tckdb-adapters"
+    sources.write_text("adapter_path: /a\nsources:\n  arc_runs: {adapter_path: /b}\n")
+    assert build.load_config(sources)["sources"]["arc_runs"]["adapter_path"] == "/b"
+
+
+def test_the_adapters_are_imported_from_the_named_checkout(build, tmp_path):
+    from conftest import ADAPTERS_ROOT
+
+    assert build.outside_adapters(ADAPTERS_ROOT) == {}
+    elsewhere = build.outside_adapters(tmp_path)
+    assert sorted(elsewhere) == ["tckdb_chemkin", "tckdb_qcschema"]
+
+
+def test_the_adapters_checkout_path_is_private(build, tmp_path):
+    config = {"adapter_path": str(tmp_path / "tckdb-adapters"), "sources": {}}
+    assert str(tmp_path / "tckdb-adapters") in build.private_values(config)
+    assert build.leaks({"a.json": f"{tmp_path}/tckdb-adapters/adapters", "b.json": "clean"}, config) == ["a.json"]
 
 
 def test_expanded_paths_and_the_home_directory_are_private(build, monkeypatch, tmp_path):
@@ -111,7 +162,7 @@ def test_the_scan_covers_generated_directories_and_requires_the_report(build, tm
     (tmp_path / "chemkin_export" / "chem.inp").write_text("ELEMENTS")
     (tmp_path / "tckdb.archive").write_text("tckdb.example.org")
     texts = build.output_texts(tmp_path, "{}")
-    assert sorted(texts) == ["build_report.json", "chemkin_export/chem.inp", "expected_outputs/x.json", "snapshot_record.json"]
+    assert sorted(texts) == ["build_record.json", "build_report.json", "chemkin_export/chem.inp", "expected_outputs/x.json"]
     assert build.leaks(texts, CONFIG) == ["expected_outputs/x.json"]
 
 
@@ -133,3 +184,128 @@ def test_the_check_guard_needs_a_declared_checkout_that_app_came_from(tmp_path):
     assert chemkin_export.tckdb_root_problem(app_file, tmp_path / "checkout") is None
     assert "outside the declared" in chemkin_export.tckdb_root_problem(app_file, tmp_path / "other")
     assert "no TCKDB checkout is declared" in chemkin_export.tckdb_root_problem(app_file, None)
+
+
+@pytest.fixture(scope="module")
+def versions():
+    sys.path.insert(0, str(SNAPSHOT_DIR))
+    try:
+        import versions as module
+
+        yield module
+    finally:
+        sys.path.remove(str(SNAPSHOT_DIR))
+
+
+def test_the_installed_tckdb_packages_are_the_submodules(versions):
+    assert versions.installed_version_problems() == []
+
+
+def test_a_mismatched_install_is_reported(versions, build, monkeypatch):
+    real = {name: versions.declared_version(path) for name, path in versions.DISTRIBUTIONS.items()}
+    monkeypatch.setattr(versions, "installed_versions", lambda: {**real, "tckdb-schemas": "9.9.9"})
+    problems = versions.installed_version_problems()
+    assert problems == [f"tckdb-schemas: installed 9.9.9, the tckdb/ submodule declares {real['tckdb-schemas']}"]
+    assert build.install_problems() == problems
+    monkeypatch.setattr(versions, "installed_versions", lambda: {**real, "tckdb-backend": "0.2.0"})
+    assert build.install_problems() == []  # the host build does not import the backend
+    monkeypatch.setattr(versions, "installed_versions", lambda: {})
+    assert len(versions.installed_version_problems()) == 3
+
+
+def test_an_egg_info_on_the_path_does_not_stand_in_for_the_install(versions, tmp_path, monkeypatch):
+    info = tmp_path / "tckdb_schemas.egg-info"
+    info.mkdir()
+    (info / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: tckdb-schemas\nVersion: 9.9.9\n")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert versions.installed_versions()["tckdb-schemas"] == versions.declared_version(
+        versions.DISTRIBUTIONS["tckdb-schemas"]
+    )
+
+
+def test_the_api_container_is_found_from_the_instance(build):
+    assert build.api_container({"container": "c"}) == "c"
+    assert build.api_container({"database": {"name": "tckdb_test_snapshot_f5"}}) == "tckdb-snapshot-f5"
+    assert build.api_container({"database": {"name": "tckdb_dev"}}) == ""
+    assert "no API container" in build.image_problems("")[0]
+    assert build.image_problems("tckdb-snapshot-no-such-container") == [
+        "the API container tckdb-snapshot-no-such-container is not running"
+    ]
+
+
+def _pins(**commits):
+    import tomllib
+
+    pins = tomllib.loads((ROOT / "pins.toml").read_text())
+    for section, commit in commits.items():
+        pins[section]["commit"] = commit
+    return pins
+
+
+def test_the_submodule_and_adapters_commits_must_be_the_pinned_ones(build, tmp_path):
+    from conftest import ADAPTERS_ROOT
+
+    config = {"adapter_path": str(ADAPTERS_ROOT)}
+    assert build.pin_problems(config, _pins()) == []
+    assert build.pin_problems(config, _pins(tckdb="0" * 40)) == [
+        f"the tckdb/ submodule is at {build.submodule_commit()}, pins.toml names {'0' * 40}"
+    ]
+    other = _adapters_checkout(tmp_path / "other")
+    (problem,) = build.pin_problems({"adapter_path": str(other)}, _pins())
+    assert problem.startswith("the tckdb-adapters checkout is at ") and problem.endswith(_pins()["tckdb_adapters"]["commit"])
+    assert build.pin_problems({"adapter_path": str(other)}, _pins(tckdb_adapters=build.source_arc.checkout_commit(other))) == []
+
+
+def _edits_document(sqlstate: str = "55000", control_restored: bool = True) -> dict:
+    refused = {"refused": True, "sqlstate": sqlstate, "message": "accepted kinetics record k is immutable"}
+    return {
+        "approved_records": [
+            {
+                "kinetics_ref": "kin_a",
+                "a_after_rollback_equals_a_before": True,
+                "attempts": [{"attempt": "change A", **refused}, {"attempt": "delete", **refused}],
+            }
+        ],
+        "control_rejected_records": [
+            {
+                "kinetics_ref": "kin_b",
+                "a_after_rollback_equals_a_before": control_restored,
+                "attempts": [{"attempt": "change A", "refused": False, "rows_affected": 1}],
+            }
+        ],
+        "expected_sqlstate_of_a_refusal": sqlstate,
+    }
+
+
+def test_the_refusal_sqlstate_is_the_builds_not_the_documents(build):
+    assert build.edit_refusal_problems(_edits_document()) == []
+    problems = build.edit_refusal_problems(_edits_document(sqlstate="XX000"))
+    assert len(problems) == 2 and all("was not refused as immutable" in p for p in problems)
+
+
+def test_the_control_must_be_restored_after_its_rollback(build):
+    assert build.edit_refusal_problems(_edits_document(control_restored=False)) == ["control kin_b: A changed"]
+
+
+def test_containers_run_the_pinned_image_with_only_named_mounts_writable(build, tmp_path):
+    image = build.image
+    assert image.IMAGE == "laxzal/tckdb-api@" + image.PINS["tckdb"]["image_digest"]
+    out = tmp_path / "out"
+    argv = image.docker_args({"DB_NAME": "d"}, mounts={out: "/out", tmp_path / "in": "/in"}, writable=(out,),
+                             adapters=tmp_path / "adapters")
+    assert argv[-1] == image.reference() and "--rm" in argv
+    volumes = [argv[i + 1] for i, a in enumerate(argv) if a == "--volume"]
+    assert f"{build.REPO_ROOT}:/paper:ro" in volumes
+    assert f"{out.resolve()}:/out:rw" in volumes and f"{(tmp_path / 'in').resolve()}:/in:ro" in volumes
+    assert f"{(tmp_path / 'adapters').resolve()}:/adapters:ro" in volumes
+    variables = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "--env")
+    assert variables["DB_NAME"] == "d"
+    assert "tckdb" not in variables["PYTHONPATH"].replace("/adapters/adapters/tckdb_", "")
+
+
+def test_the_snapshot_readme_lists_every_generator_the_build_runs(build):
+    text = " ".join((ROOT / "snapshot" / "README.md").read_text().split())
+    paragraph = text[text.index("Generators run for the snapshot") :].split("The registry's")[0]
+    listed = re.findall(r"`([a-z0-9_]+)`", paragraph)
+    assert [n for n in listed if n != "EXPECTED_OUTPUTS" and n != "build"] == list(build.EXPECTED_OUTPUTS)

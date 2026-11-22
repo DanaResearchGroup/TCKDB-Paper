@@ -74,7 +74,7 @@ def adapter_versions(cfg: dict[str, Any]) -> dict[str, Any]:
 
     adapter = Path(cfg["adapter_path"]).expanduser()
     found: dict[str, Any] = {
-        "tckdb-arc": _pyproject_version(adapter / "tckdb_arc" / "pyproject.toml"),
+        "tckdb-arc": _pyproject_version(adapter / "adapters" / "tckdb_arc" / "pyproject.toml"),
         "tckdb-adapters-core": _pyproject_version(adapter / "tckdb_core" / "pyproject.toml"),
         "tckdb_adapters_commit": checkout_commit(adapter),
     }
@@ -123,8 +123,8 @@ def validate(cfg: dict[str, Any]) -> list[str]:
             "is required and its program must be on PATH"
         )
     adapter = Path(str(cfg.get("adapter_path") or "")).expanduser()
-    if not cfg.get("adapter_path") or not (adapter / "tckdb_arc" / "tckdb_arc").is_dir():
-        problems.append(f"{SOURCE}: 'adapter_path' must be a tckdb-adapters checkout (tckdb_arc/tckdb_arc not found)")
+    if not cfg.get("adapter_path") or not (adapter / "adapters" / "tckdb_arc" / "tckdb_arc").is_dir():
+        problems.append(f"{SOURCE}: 'adapter_path' must be a tckdb-adapters checkout (adapters/tckdb_arc/tckdb_arc not found)")
     elif checkout_commit(adapter) is None:
         problems.append(f"{SOURCE}: 'adapter_path' must be a git checkout of tckdb-adapters, so its commit can be recorded")
     if cfg.get("arc_path") and checkout_commit(Path(cfg["arc_path"]).expanduser()) is None:
@@ -172,7 +172,7 @@ def _environment(cfg: dict[str, Any], key: str) -> dict[str, str]:
     adapter = Path(cfg["adapter_path"]).expanduser()
     paths = [
         adapter / "tckdb_core",
-        adapter / "tckdb_arc",
+        adapter / "adapters" / "tckdb_arc",
         TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
         TCKDB_ROOT / "clients" / "python" / "src",
     ]

@@ -1,6 +1,6 @@
 """Compare two snapshot builds.
 
-    python snapshot/compare.py <build-one-dir> <build-two-dir>
+    python snapshot/compare.py <build-one-dir> <build-two-dir> [--without-chemkin-export]
 
 Each directory is a ``build.py`` output. Compared:
 
@@ -19,6 +19,9 @@ Each directory is a ``build.py`` output. Compared:
   that cannot be recomputed, is a difference. Then the bytes are decoded and each line is masked by the row rule (the
   timestamp keys, string values that look like timestamps, public refs and the bucket name; line order is kept), and
   the artifact and manifest hashes are recomputed over the masked content.
+
+``--without-chemkin-export`` leaves ``chemkin_export/`` out (a regeneration from a restored archive has none; its files
+are checked against the database with ``tckdb_paper_generators.chemkin_export --check`` instead), and says so.
 
 Exit status 0 only if nothing differs.
 """
@@ -386,14 +389,20 @@ def compare_archives(one: Path, two: Path) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = argv if argv is not None else sys.argv[1:]
+    args = list(argv if argv is not None else sys.argv[1:])
+    without_export = "--without-chemkin-export" in args
+    args = [a for a in args if a != "--without-chemkin-export"]
     if len(args) != 2:
         print(__doc__)
         return 2
     one, two = Path(args[0]), Path(args[1])
     expected = compare_expected(one, two)
     archive = compare_archives(one, two)
-    chemkin = compare_chemkin_export(one, two)
+    chemkin = (
+        {"(not compared)": "--without-chemkin-export: check the files with chemkin_export --check"}
+        if without_export
+        else compare_chemkin_export(one, two)
+    )
     print(
         json.dumps(
             {"expected_outputs": expected, "chemkin_export": chemkin, "archive": archive},

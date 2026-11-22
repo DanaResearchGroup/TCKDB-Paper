@@ -12,7 +12,7 @@ from ``POST /scientific/export/chemkin`` (byte for byte; ``manifest.json`` witho
 
 Public refs and the manifest's ``generated_at`` change from build to build, so the file digests in the output are
 taken over the file with refs replaced by ``<ref>`` and ``generated_at`` removed (``HASH_RULE``). The digest of the
-bytes as written is recorded by the build in ``snapshot_record.json``.
+bytes as written is recorded by the build in ``build_record.json``.
 
 The parsing, hashing and arithmetic helpers do not need Cantera or a database.
 """
@@ -54,7 +54,7 @@ from tckdb_paper_generators.snapshot_cases import (
     _thermo_value,
 )
 
-RELEASE_TAG = "snapshot-demo-1"
+RELEASE_TAG = "demo-release-1"
 NAMED_SPECIES = ("C", "[OH]", "O", "[CH3]")
 SELECTED_SPECIES = "[CH3]"
 FILES = ("chem.inp", "therm.dat", "tran.dat", "manifest.json")

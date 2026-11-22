@@ -51,6 +51,7 @@ GENERATORS: dict[str, Generator] = {
     "thermo_selection_outcomes": snapshot_generators.thermo_selection_outcomes,
     "structure_selection_outcomes": snapshot_generators.structure_selection_outcomes,
     "use_case_ch4_oh": snapshot_cases.use_case_ch4_oh,
+    "approved_record_edits": snapshot_cases.approved_record_edits,
     "use_case_chemkin_export": chemkin_export.use_case_chemkin_export,
     "ch3_enthalpy_of_formation": snapshot_cases.ch3_enthalpy_of_formation,
     "network_n2h3": snapshot_cases.network_n2h3,

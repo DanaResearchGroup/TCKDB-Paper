@@ -10,42 +10,44 @@ it then:
    calculations rejected and every other record approved (``PATCH /record-reviews/{record_type}/{record_id}``);
 3. cuts one dataset release (``release`` in the sources file): a curation policy, a draft, its selections, and the
    publication. A deposit the release ships without a rights basis is attested by the curator with ``source_terms`` when
-   it came from a source whose terms the sources file names, and stops the build otherwise.
+   it came from a source whose terms the sources file names, and stops the build otherwise;
+4. for the use-case run (``use_case`` in the sources file), grades the reproducibility of its rate record and of every
+   calculation of its deposit (``POST /curation/reproducibility-assessments/{record_type}/{record_id}/evaluate``), and,
+   as the depositor, tries to add a file to its approved transition-state optimisation
+   (``POST /calculations/{calculation_ref}/artifacts``). The server must refuse that with 409; anything else stops the
+   build.
 
 Every summary, note and rationale written says that the build script wrote it for a demonstration.
 """
 
 from __future__ import annotations
 
-import os
 import re
-import subprocess
-import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import httpx
 
-from common import TCKDB_ROOT, Report, Session
+import image
+from common import Report, Session
+from tckdb_client.errors import TCKDBHTTPError
 
-DEMONSTRATION = "Written by the paper-snapshot build script as a demonstration of the curation overlay; not an independent review."
+DEMONSTRATION = "Written by the paper build script as a demonstration of the curation overlay; not an independent review."
 APPROVAL_SUMMARY = (
-    "Approved by the paper-snapshot build script as a demonstration of the curation overlay. "
+    "Approved by the paper build script as a demonstration of the curation overlay. "
     "This is not an independent review; the depositor and the build script are the same project."
 )
 
 
 def create_curator(db_env: dict[str, str], username: str, password: str, email: str, full_name: str) -> str:
-    """Create a curator account with the operator CLI."""
-    env = dict(os.environ)
-    env.update(db_env)
-    env["TCKDB_BOOTSTRAP_PASSWORD"] = password
-    done = subprocess.run(
+    """Create a curator account with the operator CLI, in the pinned image."""
+    done = image.run(
         [
-            sys.executable,
-            str(TCKDB_ROOT / "backend" / "scripts" / "bootstrap_admin.py"),
+            "python", "scripts/bootstrap_admin.py",
             "--username", username, "--email", email, "--full-name", full_name, "--role", "curator",
         ],
-        env=env, check=True, capture_output=True, text=True,
+        {**db_env, "TCKDB_BOOTSTRAP_PASSWORD": password},
     )
     return done.stdout.strip()
 
@@ -284,9 +286,8 @@ def cut_release(curator: Curator, report: Report, cfg: dict[str, Any], env: dict
             data_license, terms, attested,
         )
         selections.append({"record": selection["record"], "record_ref": ref, "selection": made})
-    custody = subprocess.run(
-        [sys.executable, "scripts/ops/verify_artifact_integrity.py", "--release", release["release_ref"]],
-        cwd=TCKDB_ROOT / "backend", env=env, capture_output=True, text=True,
+    custody = image.run(
+        ["python", "scripts/ops/verify_artifact_integrity.py", "--release", release["release_ref"]], env, check=False
     )
     if custody.returncode != 0:
         raise RuntimeError(f"curation: artifact custody check failed ({custody.returncode}): {custody.stdout[-500:]}")
@@ -303,4 +304,94 @@ def cut_release(curator: Curator, report: Report, cfg: dict[str, Any], env: dict
         "manifest_verified": (manifest.get("verification") or {}).get("verified"),
         "manifest_problems": (manifest.get("verification") or {}).get("problems"),
         "doi_minted": False,
+    }
+
+
+# --------------------------------------------------------------------------
+# the use case: reproducibility grades, and a file refused on an approved calculation
+# --------------------------------------------------------------------------
+
+PROBE_FILENAME = "approved_calculation_probe.log"
+PROBE_TEXT = (
+    "Written by the paper build script to show that a file cannot be added to an approved calculation. "
+    "The server is expected to refuse it.\n"
+)
+
+
+def grade_use_case(curator: Curator, report: Report, run: str) -> dict[str, Any]:
+    """Grade the reproducibility of the run's rate record and of every calculation its deposit holds."""
+    response = arc_response(report, run)
+    if len(response["kinetics_ids"]) != 1:
+        raise RuntimeError(f"curation: {run} deposited {len(response['kinetics_ids'])} rate records, not one")
+    rows = [
+        row
+        for row in _submission_reviews(curator, response["submission_id"])
+        if row["record_type"] == "calculation"
+        or (row["record_type"] == "kinetics" and row["record_id"] in response["kinetics_ids"])
+    ]
+    graded = []
+    for row in sorted(rows, key=lambda r: (r["record_type"], r["record_id"])):
+        body = curator.ok("POST", f"/curation/reproducibility-assessments/{row['record_type']}/{row['record_id']}/evaluate")
+        graded.append(
+            {
+                "record_type": row["record_type"],
+                "record_ref": row.get("record_public_ref"),
+                "grade": body["grade"],
+                "rubric": f"{body['rubric_name']} v{body['rubric_version']}",
+            }
+        )
+    if not any(g["record_type"] == "kinetics" for g in graded):
+        raise RuntimeError(f"curation: {run}: the rate record was not graded")
+    return {"run": run, "submission_ref": response["submission_ref"], "graded": graded}
+
+
+def _artifact_count(curator: Curator, calculation_ref: str) -> int:
+    """Every artifact of the calculation, read page by page."""
+    params: dict[str, Any] = {"calculation_ref": calculation_ref, "limit": 200}
+    count = 0
+    while True:
+        body = curator.ok("GET", "/scientific/artifacts/search", params=params)
+        count += len(body["records"])
+        if not body.get("next_cursor"):
+            return count
+        params = {**params, "cursor": body["next_cursor"]}
+
+
+def add_file_to_approved_calculation(session: Session, curator: Curator, report: Report, run: str) -> dict[str, Any]:
+    """As the depositor, try to add a file to the run's approved transition-state optimisation; require a 409."""
+    response = arc_response(report, run)
+    calculation_ref = response["calculation_key_refs"]["ts_opt"]
+    reviews = [
+        row
+        for row in _submission_reviews(curator, response["submission_id"])
+        if row["record_type"] == "calculation" and row.get("record_public_ref") == calculation_ref
+    ]
+    if len(reviews) != 1 or reviews[0]["status"] != "approved":
+        raise RuntimeError(f"curation: {run}: the transition-state optimisation {calculation_ref} is not approved")
+    before = _artifact_count(curator, calculation_ref)
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / PROBE_FILENAME
+        probe.write_text(PROBE_TEXT)
+        try:
+            session.client().upload_artifact(calculation_ref, probe, "output_log", filename=PROBE_FILENAME)
+        except TCKDBHTTPError as exc:
+            status, detail = exc.status_code, exc.detail if exc.detail is not None else exc.response_text
+        else:
+            raise RuntimeError(f"curation: {run}: an approved calculation accepted a new file ({calculation_ref})")
+    after = _artifact_count(curator, calculation_ref)
+    if status != 409 or after != before:
+        raise RuntimeError(
+            f"curation: {run}: adding a file to approved {calculation_ref} answered {status} ({detail!r}); "
+            f"artifacts {before} -> {after}"
+        )
+    return {
+        "run": run,
+        "calculation_ref": calculation_ref,
+        "calculation": "transition-state optimisation",
+        "review_status": "approved",
+        "request": f"POST /calculations/{calculation_ref}/artifacts as the depositor ({PROBE_FILENAME}, output_log)",
+        "status_code": status,
+        "detail": detail,
+        "artifacts_before": before,
+        "artifacts_after": after,
     }

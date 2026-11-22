@@ -9,7 +9,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
+
+from sqlalchemy import text
 
 from app.chemistry.arrhenius import GAS_CONSTANT_J_MOL_K
 from app.db.models.app_user import AppUser
@@ -53,6 +59,20 @@ from tests.services.scientific_read._factories import (
     make_workflow_tool_release,
     set_review,
 )
+
+
+SNAPSHOT_DIR = Path(__file__).resolve().parents[1] / "snapshot"
+
+
+@pytest.fixture(scope="module")
+def snapshot_build():
+    sys.path.insert(0, str(SNAPSHOT_DIR))
+    try:
+        import build as module
+
+        yield module
+    finally:
+        sys.path.remove(str(SNAPSHOT_DIR))
 
 
 def _ids_free(document) -> bool:
@@ -354,3 +374,81 @@ def test_candidate_lineage_emits_no_submission_timestamp(db_session):
     row = next(r for r in out["lineage"] if r["species_entry_ref"] == entry.public_ref)
     assert [c["h298_kj_mol"] for c in row["candidates"]] == [-210.0, -200.0]
     assert "submitted_at" not in json.dumps(out)
+
+
+def _use_case_kinetics_with_a_rejected_control(db_session):
+    entry, _, _ = _reaction(db_session, [("C", 1), ("[OH]", 2)], [("O", 1), ("[CH3]", 2)])
+    approved = make_kinetics(db_session, reaction_entry=entry, a=1459.78, a_units=ArrheniusAUnits.cm3_mol_s)
+    set_review(db_session, record_type=SubmissionRecordType.kinetics, record_id=approved.id, status=RecordReviewStatus.approved)
+    other, _, _ = _reaction(db_session, [("CC(C)C=O", 1), ("[H]", 2)], [("CC(C)=C[O]", 2), ("[H][H]", 1)])
+    rejected = make_kinetics(db_session, reaction_entry=other)
+    set_review(db_session, record_type=SubmissionRecordType.kinetics, record_id=rejected.id, status=RecordReviewStatus.rejected, note="rejected")
+    return approved, rejected
+
+
+def test_edit_refuses_changing_and_deleting_an_approved_rate_record_and_accepts_the_change_on_a_rejected_one(
+    db_session, snapshot_build
+):
+    approved, rejected = _use_case_kinetics_with_a_rejected_control(db_session)
+
+    out = snapshot_cases.approved_record_edits(db_session)
+
+    (row,) = out["approved_records"]
+    assert row["kinetics_ref"] == approved.public_ref
+    assert row["ever_approved"] is True
+    assert [a["attempt"] for a in row["attempts"]] == ["change A", "delete"]
+    for attempt in row["attempts"]:
+        assert attempt["refused"] is True
+        assert attempt["sqlstate"] == "55000"
+        assert f"accepted kinetics record {approved.public_ref} is immutable" == attempt["message"]
+    assert row["a_after_rollback_equals_a_before"] is True
+    (control,) = out["control_rejected_records"]
+    assert control["kinetics_ref"] == rejected.public_ref
+    assert control["attempts"][0]["refused"] is False and control["attempts"][0]["rows_affected"] == 1
+    assert control["a_after_rollback_equals_a_before"] is True
+    assert db_session.get(type(approved), approved.id) is not None
+    assert snapshot_build.edit_refusal_problems(out) == []
+    assert _ids_free(out)
+
+
+def test_edit_check_fails_when_the_trigger_does_not_fire(db_session, snapshot_build):
+    """With the database's guard switched off, the generator reports the change accepted and the build check refuses."""
+    _use_case_kinetics_with_a_rejected_control(db_session)
+    db_session.execute(text("ALTER TABLE kinetics DISABLE TRIGGER trg_as_root_kinetics"))
+
+    out = snapshot_cases.approved_record_edits(db_session)
+
+    (row,) = out["approved_records"]
+    assert [a["refused"] for a in row["attempts"]] == [False, False]
+    problems = snapshot_build.edit_refusal_problems(out)
+    assert any("change A was not refused" in p for p in problems)
+    assert any("delete was not refused" in p for p in problems)
+
+
+def test_edit_check_fails_without_a_control(snapshot_build):
+    document = {"approved_records": [], "control_rejected_records": [], "expected_sqlstate_of_a_refusal": "55000"}
+    assert len(snapshot_build.edit_refusal_problems(document)) == 2
+
+
+def test_use_case_reports_the_stored_grades_of_the_rate_record_and_its_calculations(db_session):
+    from app.services.reproducibility_rubric import evaluate_and_append_reproducibility
+
+    entry, _, _ = _reaction(db_session, [("C", 1), ("[OH]", 2)], [("O", 1), ("[CH3]", 2)])
+    kinetics = make_kinetics(db_session, reaction_entry=entry)
+    ts_entry = make_transition_state_entry(
+        db_session, transition_state=make_transition_state(db_session, reaction_entry=entry, label="TS0")
+    )
+    opt = make_calculation(db_session, type=CalculationType.opt, transition_state_entry_id=ts_entry.id)
+    make_calculation(db_session, type=CalculationType.freq, transition_state_entry_id=ts_entry.id)
+    stored = evaluate_and_append_reproducibility(db_session, record_type=SubmissionRecordType.kinetics, record_id=kinetics.id)
+    stored_opt = evaluate_and_append_reproducibility(db_session, record_type=SubmissionRecordType.calculation, record_id=opt.id)
+
+    (row,) = snapshot_cases.use_case_ch4_oh(db_session)["computed_records"]
+
+    grades = row["reproducibility"]
+    assert grades["rate_record"]["grade"] == stored.grade.value
+    assert grades["calculation_count"] == 2
+    by_type = {c["type"]: c for c in grades["calculations"]}
+    assert by_type["opt"]["assessment"]["grade"] == stored_opt.grade.value
+    assert by_type["freq"]["assessment"] is None
+    assert grades["calculations_by_grade"]["not_assessed"] == 1

@@ -52,12 +52,20 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check out the pinned tckdb-adapters
+        run: |
+          commit=$(python3 -c 'import tomllib; print(tomllib.load(open("pins.toml", "rb"))["tckdb_adapters"]["commit"])')
+          git clone --quiet https://github.com/calvinp0/tckdb-adapters.git "$RUNNER_TEMP/tckdb-adapters"
+          git -C "$RUNNER_TEMP/tckdb-adapters" checkout --quiet "$commit"
+          echo "TCKDB_ADAPTERS_ROOT=$RUNNER_TEMP/tckdb-adapters" >> "$GITHUB_ENV"
+
       - name: Set up conda environment
         uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
           use-mamba: true
           environment-file: tckdb/backend/environment.yml
+          # TCKDB's test fixtures migrate with `conda run -n tckdb_env`, so the env carries that name here.
           activate-environment: tckdb_env
           auto-activate-base: false
 

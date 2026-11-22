@@ -2,25 +2,35 @@
 
 [tckdb]
 repository = "https://github.com/TCKDB/TCKDB.git"
-commit = "bd53cfc6b870cd623c0a69e6a15d8a731d9ef962"
-tag = "v0.2.0"
-image = "laxzal/tckdb-api:sha-bd53cfc6b870cd623c0a69e6a15d8a731d9ef962"
-image_digest = "sha256:74637d4ef23d150f468209831a9c1b02e8d7b718d24420de4e6663f569bb07f2"
-image_version_tag = "laxzal/tckdb-api:0.2.0"
-image_version_tag_digest = "sha256:74637d4ef23d150f468209831a9c1b02e8d7b718d24420de4e6663f569bb07f2"
+commit = "67a812c7dec5cf2a10fc48955fa92bf71895d4f4"
+tag = "v0.4.0"
+image = "laxzal/tckdb-api:sha-67a812c7dec5cf2a10fc48955fa92bf71895d4f4"
+image_digest = "sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec4cfdfba"
+image_version_tag = "laxzal/tckdb-api:0.4.0"
+image_version_tag_digest = "sha256:519a48331a634ea244a9b7346be3500faee086dd80487873f516ed8ec4cfdfba"
+
+# The platform images behind image_digest (a multi-platform index): manifest and config digests per platform.
+[tckdb.image_platforms."linux/amd64"]
+manifest = "sha256:7c933a9aa6ff92e325b9f535a7defa32e4eacb79498dbd34dd75bf43562fb602"
+config = "sha256:e6fdbe0abd8e657ef97d3ad7a4eb0fcce1e5a76db8c766e7428b7a6886fb595a"
+
+[tckdb.image_platforms."linux/arm64"]
+manifest = "sha256:6f596e9b71d884f2ccd3667c3e64d4f4173255f4b25cbc077ff0dbc848910887"
+config = "sha256:345f6f59781fe1afa52085af052168e5c66e7ab56471e3157745af8f18a63fb1"
 
 # Package versions declared by the pinned TCKDB commit.
 [tckdb.packages]
-tckdb-client = "0.208.2"
-tckdb-chemkin = "0.7.3"
-tckdb-schemas = "0.175.2"
+tckdb-client = "0.211.0"
+tckdb-schemas = "0.177.3"
 
-# Used by the ARC source of the snapshot build (not needed for the unit tests).
+# The CHEMKIN and QCSchema adapters (snapshot build and unit tests) and the ARC adapter (the build's ARC source).
 [tckdb_adapters]
 repository = "https://github.com/calvinp0/tckdb-adapters.git"
-commit = "63ca2c38702fd74656eca48615e5ce9915c44cc4"
-tckdb-arc = "0.15.7"
-tckdb-core = "0.5.7"
+commit = "9fc09b226f3add5682cbdc6c63d5df3069058376"
+tckdb-arc = "0.15.22"
+tckdb-chemkin = "0.7.10"
+tckdb-core = "0.5.21"
+tckdb-qcschema = "0.9.12"
 
 [arc]
 repository = "https://github.com/ReactionMechanismGenerator/ARC.git"
