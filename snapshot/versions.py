@@ -1,8 +1,8 @@
-"""Compare the installed ``tckdb-backend``, ``tckdb-client`` and ``tckdb-schemas`` with the versions the ``tckdb/``
-submodule declares.
+"""Compare the installed ``tckdb-backend``, ``tckdb-client`` and ``tckdb-schemas`` of this environment with the versions
+the ``tckdb/`` submodule declares.
 
-The versions are read in a child of this interpreter: isolated (``-I``), or with a given environment and working
-directory.
+The versions are read in an isolated child of this interpreter (``-I``), so source directories on ``sys.path`` (and the
+``*.egg-info`` an editable install leaves in them) do not stand in for the environment's own record.
 """
 
 from __future__ import annotations
@@ -39,37 +39,22 @@ _READ = (
 )
 
 
-def installed_versions(env: dict[str, str] | None = None, cwd: Path | None = None) -> dict[str, str | None]:
-    """The installed version of each TCKDB distribution, as a child of this interpreter sees it.
-
-    Without ``env`` the child runs isolated; with it, it runs with that environment and working directory.
-    """
-    code = _READ % sorted(DISTRIBUTIONS)
-    argv = [sys.executable, "-c", code] if env is not None else [sys.executable, "-I", "-c", code]
-    done = subprocess.run(argv, env=env, cwd=cwd, capture_output=True, text=True, check=True)
+def installed_versions() -> dict[str, str | None]:
+    """The installed version of each TCKDB distribution in this environment."""
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", _READ % sorted(DISTRIBUTIONS)], capture_output=True, text=True, check=True
+    )
     return json.loads(done.stdout)
 
 
-def installed_version_problems(env: dict[str, str] | None = None, cwd: Path | None = None) -> list[str]:
-    """One line per TCKDB distribution whose installed version is not the one the submodule declares."""
-    found = installed_versions(env, cwd)
+def installed_version_problems(names: tuple[str, ...] | None = None) -> list[str]:
+    """One line per TCKDB distribution (of ``names``, default all) whose installed version is not the submodule's."""
+    found = installed_versions()
     problems = []
     for name, pyproject in DISTRIBUTIONS.items():
+        if names is not None and name not in names:
+            continue
         declared, installed = declared_version(pyproject), found.get(name)
         if installed != declared:
             problems.append(f"{name}: installed {installed or 'nothing'}, the tckdb/ submodule declares {declared}")
     return problems
-
-
-def refuse_mismatched_install(what: str, env: dict[str, str] | None = None, cwd: Path | None = None) -> None:
-    """Stop unless both the environment alone and, when given, a process started with ``env`` in ``cwd`` see the
-    submodule's versions."""
-    problems = installed_version_problems()
-    if env is not None:
-        problems += [f"{line} (as a process started like the API sees it)" for line in installed_version_problems(env, cwd)]
-    if problems:
-        raise SystemExit(
-            f"{what} refused: the installed TCKDB packages are not the submodule's, so a release manifest would "
-            "misstate its versions:\n  - " + "\n  - ".join(problems)
-            + "\ninstall the submodule's packages into this environment (README.md, 'Set up')"
-        )

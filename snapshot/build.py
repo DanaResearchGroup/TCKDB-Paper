@@ -30,10 +30,11 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 TCKDB_ROOT = REPO_ROOT / "tckdb"
+#: What the build imports on the host: the submodule's client and schemas (it talks to the instance over HTTP only) and
+#: this repository. TCKDB's backend is not on the host's path; everything that imports it runs in the pinned image.
 PACKAGE_PATHS = [
     TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
     TCKDB_ROOT / "clients" / "python" / "src",
-    TCKDB_ROOT / "backend",
     REPO_ROOT,
 ]
 # This checkout's packages come first on the path. The adapters' are added from ``adapter_path`` once the sources file
@@ -46,6 +47,7 @@ import yaml  # noqa: E402
 
 import curation  # noqa: E402
 import export  # noqa: E402
+import image  # noqa: E402
 import source_arc  # noqa: E402
 import source_chemkin  # noqa: E402
 import source_e2  # noqa: E402
@@ -152,14 +154,35 @@ def pin_problems(config: dict[str, Any], pins: dict[str, Any] | None = None) -> 
     return problems
 
 
-def install_problems(package_paths: list[Path]) -> list[str]:
-    """Installed TCKDB versions that differ from the submodule's, in this environment alone and as the processes the
-    build starts see them (``package_paths`` on ``PYTHONPATH``, working directory ``tckdb/backend``)."""
-    env = export.subprocess_env({}, package_paths)
-    return installed_version_problems() + [
-        f"{line} (as the build's subprocesses see it)"
-        for line in installed_version_problems(env, TCKDB_ROOT / "backend")
-    ]
+#: The distributions the build imports on the host; ``tckdb_client`` sends its installed version with every request.
+HOST_DISTRIBUTIONS = ("tckdb-client", "tckdb-schemas")
+
+
+def install_problems() -> list[str]:
+    """Installed host versions of the client and schemas that differ from the submodule's."""
+    return installed_version_problems(names=HOST_DISTRIBUTIONS)
+
+
+def api_container(instance: dict[str, Any]) -> str:
+    """The API container of the instance: ``instance.container``, else the name ``instance.py`` gives it."""
+    if instance.get("container"):
+        return str(instance["container"])
+    name = str((instance.get("database") or {}).get("name") or "")
+    prefix = "tckdb_test_snapshot_"
+    return "tckdb-snapshot-" + name[len(prefix):] if name.startswith(prefix) else ""
+
+
+def image_problems(container: str) -> list[str]:
+    """The API container is running the image ``pins.toml`` names, by digest."""
+    if not container:
+        return ["no API container is named: set instance.container, or use an instance made by instance.py"]
+    running = subprocess.run(["docker", "inspect", "--format", "{{.State.Running}}", container], capture_output=True, text=True)
+    if running.stdout.strip() != "true":
+        return [f"the API container {container} is not running"]
+    digest = image.container_image_digest(container)
+    if digest != image.PINS["tckdb"]["image_digest"]:
+        return [f"the API container {container} runs {digest}, pins.toml names {image.PINS['tckdb']['image_digest']}"]
+    return []
 
 
 def curation_problems(config: dict[str, Any]) -> list[str]:
@@ -314,7 +337,7 @@ def package_versions(adapters: Path) -> dict[str, Any]:
     }
     return {
         "declared_by_this_checkout": declared,
-        "installed_matches_this_checkout": not installed_version_problems(),
+        "installed_matches_this_checkout": not install_problems(),
         "imported_from_this_checkout": not outside_checkout(),
         "declared_by_the_adapters_checkout": adapter_declared,
         "imported_from_the_adapters_checkout": not outside_adapters(adapters),
@@ -323,12 +346,11 @@ def package_versions(adapters: Path) -> dict[str, Any]:
 
 def outside_checkout() -> dict[str, str]:
     """The TCKDB packages this process imported from outside the ``tckdb/`` submodule, by name."""
-    import app
     import tckdb_client
     import tckdb_schemas
 
     root = TCKDB_ROOT.resolve()
-    modules = {"app": app, "tckdb_client": tckdb_client, "tckdb_schemas": tckdb_schemas}
+    modules = {"tckdb_client": tckdb_client, "tckdb_schemas": tckdb_schemas}
     return {
         name: str(Path(module.__file__).resolve())
         for name, module in modules.items()
@@ -460,15 +482,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {problem}", file=sys.stderr)
         return 2
     adapters = adapters_checkout(config)
-    package_paths = [*PACKAGE_PATHS, *adapter_package_paths(adapters)]
     for _path in reversed(adapter_package_paths(adapters)):
         sys.path.insert(0, str(_path))
-    problems = install_problems(package_paths)
+    problems = install_problems()
     if problems:
         raise SystemExit(
-            "the build refused: the installed TCKDB packages are not the submodule's, so a release manifest would "
-            "misstate its versions:\n  - " + "\n  - ".join(problems)
-            + "\ninstall the submodule's packages into this environment (README.md, 'Set up')"
+            "the build refused: the installed tckdb-client or tckdb-schemas is not the submodule's:\n  - "
+            + "\n  - ".join(problems) + "\ninstall the submodule's packages into this environment (README.md, 'Set up')"
         )
     stray = outside_adapters(adapters)
     if stray:
@@ -477,10 +497,15 @@ def main(argv: list[str] | None = None) -> int:
             + ", ".join(f"{name} ({path})" for name, path in sorted(stray.items()))
         )
     instance = config["instance"]
+    container = api_container(instance)
+    problems = image_problems(container)
+    if problems:
+        raise SystemExit("the build refused: " + "; ".join(problems))
     base_url = instance.get("api_url", "http://127.0.0.1:8010")
     out_dir = (args.out_dir or args.work_dir / "snapshot").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     db_env = database_env(instance)
+    image.context.update(env=db_env, adapters=adapters)
     accounts = config.get("accounts") or {}
     depositor = {"username": "snapshot_depositor", "password": "snapshot-depositor-pass", "email": "depositor@snapshot.invalid",
                  "full_name": "Snapshot build depositor", **(accounts.get("depositor") or {})}
@@ -532,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
                           f"{len(approval['caught_error']['approved'])} approved")
                 if plan.get("release"):
                     approval["release"] = curation.cut_release(
-                        reviewer, report, plan["release"], export.subprocess_env(db_env, package_paths)
+                        reviewer, report, plan["release"], db_env
                     )
                     print(f"[curation] release {plan['release']['tag']} published")
                 if config.get("chemkin_export"):
@@ -553,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
                 reviewer.close()
 
         if not args.skip_export:
-            env = export.subprocess_env(db_env, package_paths)
+            env = db_env
             archive = out_dir / "tckdb.archive"
             print("[export] archive ...")
             written = export.create_archive(archive, env).strip().splitlines()
@@ -562,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
             exports["archive_verify"] = [ln for ln in verified if not ln.startswith("Checked ")]
             print("[export] expected outputs ...")
             wanted = list(config.get("expected_outputs") or EXPECTED_OUTPUTS)
-            printed = export.expected_outputs(out_dir / "expected_outputs", env, only=wanted).splitlines()
+            printed = export.expected_outputs(out_dir / "expected_outputs", env, adapters, only=wanted).splitlines()
             if config.get("chemkin_export"):
                 if use_case_export.OUTPUT_NAME not in wanted:
                     raise SystemExit(f"chemkin_export is configured but expected_outputs does not list {use_case_export.OUTPUT_NAME}")
@@ -579,6 +604,9 @@ def main(argv: list[str] | None = None) -> int:
                     raise SystemExit("the refusal of edits to approved records is not shown:\n  - " + "\n  - ".join(refused))
             exports["expected_outputs"] = [ln for ln in printed if re.match(r"^[0-9a-f]{64}  ", ln)]
             exports["archive_sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+            print("[export] image ...")
+            version = image.PINS["tckdb"]["image_version_tag"].rsplit(":", 1)[1]
+            exports["image"] = image.save(out_dir / f"tckdb-api-{version}.tar.gz")
 
     finally:
         report.write(out_dir / "build_report.json")
@@ -586,12 +614,19 @@ def main(argv: list[str] | None = None) -> int:
         "snapshot": "TCKDB paper demonstration snapshot",
         "source_commit": git_commit(adapters),
         "packages": package_versions(adapters),
+        "tckdb_image": {
+            "image": image.IMAGE,
+            "api_container_image_digest": image.container_image_digest(container),
+            "inside": image.image_versions(db_env),
+        },
         "sources": source_records(config, report),
         "approval": approval,
         "exports": exports,
         "built_at_unix": int(started),
         "wall_seconds": round(time.time() - started, 1),
     }
+    if record["tckdb_image"]["api_container_image_digest"] != image.PINS["tckdb"]["image_digest"]:
+        raise SystemExit(f"the API container ran {record['tckdb_image']['api_container_image_digest']}, not the pinned image")
     record_text = json.dumps(record, indent=2, sort_keys=True, default=str) + "\n"
     (out_dir / "build_record.json").write_text(record_text)
     leaked = leaks(output_texts(out_dir, record_text), config)

@@ -1,18 +1,17 @@
-"""Create, run and remove a throw-away local TCKDB instance.
+"""Create, run and remove a throw-away local TCKDB instance, served by the pinned container image.
 
-An instance is a database (``tckdb_test_snapshot_<name>``), a bucket (``tckdb-test-snapshot-<name>``) and an API process
-on a local port. ``down --drop`` refuses names without the ``tckdb_test_`` prefix.
+An instance is a database (``tckdb_test_snapshot_<name>``), a bucket (``tckdb-test-snapshot-<name>``) and an API
+container (``tckdb-snapshot-<name>``) of the image ``pins.toml`` names, by digest, on a local port. ``down --drop``
+refuses names without the ``tckdb_test_`` prefix.
 
     python snapshot/instance.py up --name a --port 8101
     python snapshot/instance.py down --name a [--drop]
     python snapshot/instance.py restore --name c --archive snapshot/tckdb.archive
 
-Run it with the Python of the environment the README sets up (``tckdb_paper_build``): the API process and the
-migrations use this interpreter, and ``up`` refuses an environment whose installed ``tckdb-backend``, ``tckdb-client``
-or ``tckdb-schemas`` is not the submodule's version.
-
-Needs Postgres (``docker compose up -d db``) and an S3-compatible store at ``S3_ENDPOINT_URL`` (default
-``http://localhost:9000``, credentials ``S3_ACCESS_KEY`` / ``S3_SECRET_KEY``). Process state lives under ``--work-dir``.
+Needs Docker, Postgres with the RDKit cartridge (``docker compose up -d db`` in ``tckdb/``) and an S3-compatible store
+at ``S3_ENDPOINT_URL`` (default ``http://localhost:9000``, credentials ``S3_ACCESS_KEY`` / ``S3_SECRET_KEY``), both
+reachable on the host's network. The migrations, the API and ``restore`` run in the image; the database and the bucket
+are created from the host. Process state and the API's log live under ``--work-dir``.
 """
 
 from __future__ import annotations
@@ -20,28 +19,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import signal
 import subprocess
-import sys
 import time
 import urllib.request
 from pathlib import Path
 
-from versions import refuse_mismatched_install
+import image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TCKDB_ROOT = REPO_ROOT / "tckdb"
-BACKEND = TCKDB_ROOT / "backend"
-PACKAGE_PATHS = [
-    TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
-    TCKDB_ROOT / "clients" / "python" / "src",
-    BACKEND,
-]
+
+
+def container_name(name: str) -> str:
+    return f"tckdb-snapshot-{name}"
 
 
 def _db_env(name: str) -> dict[str, str]:
-    env = dict(os.environ)
-    env.update(
+    """The database and object-store settings of instance ``name`` (what the API container is given)."""
+    return dict(
         DB_USER=os.environ.get("DB_USER", "tckdb"),
         DB_PASSWORD=os.environ.get("DB_PASSWORD", "tckdb"),
         DB_HOST=os.environ.get("DB_HOST", "127.0.0.1"),
@@ -52,9 +46,7 @@ def _db_env(name: str) -> dict[str, str]:
         S3_ACCESS_KEY=os.environ.get("S3_ACCESS_KEY", "tckdb"),
         S3_SECRET_KEY=os.environ.get("S3_SECRET_KEY", "tckdb_secret"),
         RATE_LIMIT_ENABLED="false",
-        PYTHONPATH=os.pathsep.join(str(p) for p in PACKAGE_PATHS),
     )
-    return env
 
 
 def _psql_connect(env: dict[str, str], dbname: str = "postgres"):
@@ -80,44 +72,48 @@ def _s3(env: dict[str, str]):
 
 def up(name: str, port: int, work_dir: Path) -> None:
     env = _db_env(name)
-    refuse_mismatched_install("instance.py up", env, BACKEND)
     dbname = env["DB_NAME"]
+    image.ensure_pulled()
     with _psql_connect(env) as conn:
         exists = conn.execute("select 1 from pg_database where datname = %s", (dbname,)).fetchone()
         if exists:
             raise SystemExit(f"database {dbname} already exists; run 'down --drop' first")
         conn.execute(f'create database "{dbname}"')
-    migrated = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND, env=env, capture_output=True, text=True)
+    migrated = image.run(["alembic", "upgrade", "head"], env, check=False)
     if migrated.returncode != 0:
-        raise SystemExit(f"alembic upgrade head failed:\n{migrated.stdout}\n{migrated.stderr}")
+        raise SystemExit(f"alembic upgrade head failed in {image.IMAGE}:\n{migrated.stdout}\n{migrated.stderr}")
     _s3(env).create_bucket(Bucket=env["S3_BUCKET"])
     work_dir.mkdir(parents=True, exist_ok=True)
-    log = (work_dir / f"api_{name}.log").open("wb")
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(port)],
-        cwd=BACKEND, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+    container = container_name(name)
+    image.start(
+        ["uvicorn", "app.api.app:create_app", "--factory", "--host", "127.0.0.1", "--port", str(port)], env, container
     )
-    (work_dir / f"instance_{name}.json").write_text(json.dumps({"pid": proc.pid, "port": port, "db": dbname}))
+    digest = image.container_image_digest(container)
+    (work_dir / f"instance_{name}.json").write_text(
+        json.dumps({"container": container, "port": port, "db": dbname, "image": image.IMAGE, "image_digest": digest})
+    )
     for _ in range(120):
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/status", timeout=2) as response:
                 if response.status == 200:
-                    print(f"instance {name}: http://127.0.0.1:{port}  db={dbname}  bucket={env['S3_BUCKET']}")
+                    print(f"instance {name}: http://127.0.0.1:{port}  db={dbname}  bucket={env['S3_BUCKET']}  "
+                          f"image={image.IMAGE}")
                     return
         except OSError:
             time.sleep(1)
-    raise SystemExit(f"API did not come up; see {work_dir / f'api_{name}.log'}")
+    raise SystemExit(f"API did not come up; see 'docker logs {container}'")
 
 
 def down(name: str, work_dir: Path, drop: bool) -> None:
     env = _db_env(name)
     state = work_dir / f"instance_{name}.json"
+    container = container_name(name)
+    logs = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
+    if logs.returncode == 0:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / f"api_{name}.log").write_text(logs.stdout + logs.stderr)
+    subprocess.run(["docker", "rm", "--force", container], capture_output=True, text=True)
     if state.is_file():
-        pid = json.loads(state.read_text())["pid"]
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except ProcessLookupError:
-            pass
         state.unlink()
     if drop:
         dbname = env["DB_NAME"]
@@ -140,9 +136,10 @@ def down(name: str, work_dir: Path, drop: bool) -> None:
 
 def restore(name: str, archive: Path) -> None:
     """Restore an archive into the empty instance ``name`` with ``tckdb_archive.py``."""
-    done = subprocess.run(
-        [sys.executable, "scripts/tckdb_archive.py", "restore", str(archive.resolve())],
-        cwd=BACKEND, env=_db_env(name), capture_output=True, text=True,
+    archive = archive.resolve()
+    done = image.run(
+        ["python", "scripts/tckdb_archive.py", "restore", f"/restore/{archive.name}"],
+        _db_env(name), mounts={archive.parent: "/restore"}, check=False,
     )
     if done.returncode != 0:
         raise SystemExit(f"restore failed:\n{done.stdout}\n{done.stderr}")

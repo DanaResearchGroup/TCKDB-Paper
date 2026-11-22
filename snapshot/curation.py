@@ -22,17 +22,15 @@ Every summary, note and rationale written says that the build script wrote it fo
 
 from __future__ import annotations
 
-import os
 import re
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from common import TCKDB_ROOT, Report, Session
+import image
+from common import Report, Session
 from tckdb_client.errors import TCKDBHTTPError
 
 DEMONSTRATION = "Written by the paper build script as a demonstration of the curation overlay; not an independent review."
@@ -43,17 +41,13 @@ APPROVAL_SUMMARY = (
 
 
 def create_curator(db_env: dict[str, str], username: str, password: str, email: str, full_name: str) -> str:
-    """Create a curator account with the operator CLI."""
-    env = dict(os.environ)
-    env.update(db_env)
-    env["TCKDB_BOOTSTRAP_PASSWORD"] = password
-    done = subprocess.run(
+    """Create a curator account with the operator CLI, in the pinned image."""
+    done = image.run(
         [
-            sys.executable,
-            str(TCKDB_ROOT / "backend" / "scripts" / "bootstrap_admin.py"),
+            "python", "scripts/bootstrap_admin.py",
             "--username", username, "--email", email, "--full-name", full_name, "--role", "curator",
         ],
-        env=env, check=True, capture_output=True, text=True,
+        {**db_env, "TCKDB_BOOTSTRAP_PASSWORD": password},
     )
     return done.stdout.strip()
 
@@ -292,9 +286,8 @@ def cut_release(curator: Curator, report: Report, cfg: dict[str, Any], env: dict
             data_license, terms, attested,
         )
         selections.append({"record": selection["record"], "record_ref": ref, "selection": made})
-    custody = subprocess.run(
-        [sys.executable, "scripts/ops/verify_artifact_integrity.py", "--release", release["release_ref"]],
-        cwd=TCKDB_ROOT / "backend", env=env, capture_output=True, text=True,
+    custody = image.run(
+        ["python", "scripts/ops/verify_artifact_integrity.py", "--release", release["release_ref"]], env, check=False
     )
     if custody.returncode != 0:
         raise RuntimeError(f"curation: artifact custody check failed ({custody.returncode}): {custody.stdout[-500:]}")

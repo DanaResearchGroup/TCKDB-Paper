@@ -21,14 +21,13 @@ import hashlib
 import io
 import json
 import math
-import subprocess
-import sys
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import curation
-from common import TCKDB_ROOT, Report
+import image
+from common import Report
 
 DIRECTORY = "chemkin_export"
 REQUEST_FILE = "export_request.json"
@@ -145,12 +144,10 @@ def export_use_case(
 
 
 def check_saved(directory: Path, env: dict[str, str]) -> dict[str, Any]:
-    """Run ``tckdb_paper_generators.chemkin_export --check`` against the database; raise unless the saved files match the
-    in-process export (byte for byte, refs included; the manifest without ``generated_at``)."""
-    done = subprocess.run(
-        [sys.executable, "-m", "tckdb_paper_generators.chemkin_export", "--check", str(directory)],
-        cwd=TCKDB_ROOT / "backend", env=env, capture_output=True, text=True,
-    )
+    """Run ``tckdb_paper_generators.chemkin_export --check`` against the database, in the pinned image; raise unless the
+    saved files match the in-process export (byte for byte, refs included; the manifest without ``generated_at``)."""
+    argv = ["python", "-m", "tckdb_paper_generators.chemkin_export", "--check", "/export", "--tckdb-root", "/app"]
+    done = image.run(argv, env, mounts={directory: "/export"}, check=False)
     try:
         result = json.loads(done.stdout)
     except json.JSONDecodeError:

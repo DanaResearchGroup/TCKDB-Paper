@@ -24,7 +24,6 @@ TCKDB_ROOT = REPO_ROOT / "tckdb"
 PACKAGE_ROOTS = (
     TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
     TCKDB_ROOT / "clients" / "python" / "src",
-    TCKDB_ROOT / "backend",
     REPO_ROOT,
 )
 

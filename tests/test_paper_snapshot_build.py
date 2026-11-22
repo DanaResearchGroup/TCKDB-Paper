@@ -80,13 +80,13 @@ def test_a_checkout_commit_is_its_head(source_arc):
 def test_a_package_outside_the_submodule_is_reported(build, monkeypatch, tmp_path):
     import types
 
-    outside = tmp_path / "elsewhere" / "app" / "__init__.py"
+    outside = tmp_path / "elsewhere" / "tckdb_client" / "__init__.py"
     outside.parent.mkdir(parents=True)
     outside.write_text("")
-    fake = types.ModuleType("app")
+    fake = types.ModuleType("tckdb_client")
     fake.__file__ = str(outside)
-    monkeypatch.setitem(sys.modules, "app", fake)
-    assert build.outside_checkout() == {"app": str(outside.resolve())}
+    monkeypatch.setitem(sys.modules, "tckdb_client", fake)
+    assert build.outside_checkout() == {"tckdb_client": str(outside.resolve())}
     monkeypatch.undo()
     assert build.outside_checkout() == {}
 
@@ -200,50 +200,37 @@ def test_the_installed_tckdb_packages_are_the_submodules(versions):
     assert versions.installed_version_problems() == []
 
 
-def test_a_mismatched_install_is_refused(versions, monkeypatch):
+def test_a_mismatched_install_is_reported(versions, build, monkeypatch):
     real = {name: versions.declared_version(path) for name, path in versions.DISTRIBUTIONS.items()}
-    monkeypatch.setattr(versions, "installed_versions", lambda env=None, cwd=None: {**real, "tckdb-backend": "0.2.0"})
+    monkeypatch.setattr(versions, "installed_versions", lambda: {**real, "tckdb-schemas": "9.9.9"})
     problems = versions.installed_version_problems()
-    assert len(problems) == 1 and problems[0].startswith("tckdb-backend: installed 0.2.0")
-    with pytest.raises(SystemExit, match="the build refused"):
-        versions.refuse_mismatched_install("the build")
-    monkeypatch.setattr(versions, "installed_versions", lambda env=None, cwd=None: {})
+    assert problems == [f"tckdb-schemas: installed 9.9.9, the tckdb/ submodule declares {real['tckdb-schemas']}"]
+    assert build.install_problems() == problems
+    monkeypatch.setattr(versions, "installed_versions", lambda: {**real, "tckdb-backend": "0.2.0"})
+    assert build.install_problems() == []  # the host build does not import the backend
+    monkeypatch.setattr(versions, "installed_versions", lambda: {})
     assert len(versions.installed_version_problems()) == 3
 
 
-def _stale_egg_info(root: Path, version: str = "9.9.9") -> Path:
-    info = root / "tckdb_schemas.egg-info"
-    info.mkdir(parents=True)
-    (info / "PKG-INFO").write_text(f"Metadata-Version: 2.1\nName: tckdb-schemas\nVersion: {version}\n")
-    return root
+def test_an_egg_info_on_the_path_does_not_stand_in_for_the_install(versions, tmp_path, monkeypatch):
+    info = tmp_path / "tckdb_schemas.egg-info"
+    info.mkdir()
+    (info / "PKG-INFO").write_text("Metadata-Version: 2.1\nName: tckdb-schemas\nVersion: 9.9.9\n")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert versions.installed_versions()["tckdb-schemas"] == versions.declared_version(
+        versions.DISTRIBUTIONS["tckdb-schemas"]
+    )
 
 
-def test_the_version_check_reads_what_a_process_on_the_source_path_sees(versions, tmp_path):
-    import os
-
-    declared = {name: versions.declared_version(path) for name, path in versions.DISTRIBUTIONS.items()}
-    source_dirs = [str(p.parent) for p in versions.DISTRIBUTIONS.values()]
-    backend = versions.TCKDB_ROOT / "backend"
-    assert versions.installed_versions() == declared
-    clean = {**os.environ, "PYTHONPATH": os.pathsep.join(source_dirs)}
-    assert versions.installed_versions(clean, backend) == declared
-    stale = _stale_egg_info(tmp_path / "stale")
-    shadowed = {**os.environ, "PYTHONPATH": os.pathsep.join([str(stale), *source_dirs])}
-    assert versions.installed_versions(shadowed, backend)["tckdb-schemas"] == "9.9.9"
-    assert versions.installed_version_problems(shadowed, backend) == [
-        f"tckdb-schemas: installed 9.9.9, the tckdb/ submodule declares {declared['tckdb-schemas']}"
+def test_the_api_container_is_found_from_the_instance(build):
+    assert build.api_container({"container": "c"}) == "c"
+    assert build.api_container({"database": {"name": "tckdb_test_snapshot_f5"}}) == "tckdb-snapshot-f5"
+    assert build.api_container({"database": {"name": "tckdb_dev"}}) == ""
+    assert "no API container" in build.image_problems("")[0]
+    assert build.image_problems("tckdb-snapshot-no-such-container") == [
+        "the API container tckdb-snapshot-no-such-container is not running"
     ]
-    assert versions.installed_version_problems() == []
-
-
-def test_the_build_checks_the_view_of_the_processes_it_starts(build, tmp_path):
-    from conftest import ADAPTERS_ROOT
-
-    paths = [*build.PACKAGE_PATHS, *build.adapter_package_paths(ADAPTERS_ROOT)]
-    assert build.install_problems(paths) == []
-    stale = _stale_egg_info(tmp_path / "stale")
-    problems = build.install_problems([stale, *paths])
-    assert len(problems) == 1 and problems[0].startswith("tckdb-schemas: installed 9.9.9")
 
 
 def _pins(**commits):
@@ -298,3 +285,30 @@ def test_the_refusal_sqlstate_is_the_builds_not_the_documents(build):
 
 def test_the_control_must_be_restored_after_its_rollback(build):
     assert build.edit_refusal_problems(_edits_document(control_restored=False)) == ["control kin_b: A changed"]
+
+
+def test_a_container_running_another_image_is_refused(build, monkeypatch):
+    import types
+
+    monkeypatch.setattr(build.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout="true\n", returncode=0))
+    monkeypatch.setattr(build.image, "container_image_digest", lambda name: "sha256:" + "0" * 64)
+    (problem,) = build.image_problems("tckdb-snapshot-x")
+    assert problem.endswith(f"runs sha256:{'0' * 64}, pins.toml names {build.image.PINS['tckdb']['image_digest']}")
+    monkeypatch.setattr(build.image, "container_image_digest", lambda name: build.image.PINS["tckdb"]["image_digest"])
+    assert build.image_problems("tckdb-snapshot-x") == []
+
+
+def test_containers_run_the_pinned_image_with_only_named_mounts_writable(build, tmp_path):
+    image = build.image
+    assert image.IMAGE == "laxzal/tckdb-api@" + image.PINS["tckdb"]["image_digest"]
+    out = tmp_path / "out"
+    argv = image.docker_args({"DB_NAME": "d"}, mounts={out: "/out", tmp_path / "in": "/in"}, writable=(out,),
+                             adapters=tmp_path / "adapters")
+    assert argv[-1] == image.IMAGE and "--rm" in argv
+    volumes = [argv[i + 1] for i, a in enumerate(argv) if a == "--volume"]
+    assert f"{build.REPO_ROOT}:/paper:ro" in volumes
+    assert f"{out.resolve()}:/out:rw" in volumes and f"{(tmp_path / 'in').resolve()}:/in:ro" in volumes
+    assert f"{(tmp_path / 'adapters').resolve()}:/adapters:ro" in volumes
+    variables = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "--env")
+    assert variables["DB_NAME"] == "d"
+    assert "tckdb" not in variables["PYTHONPATH"].replace("/adapters/adapters/tckdb_", "")
