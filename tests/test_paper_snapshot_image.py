@@ -125,3 +125,31 @@ def test_the_server_must_be_the_containers_port_and_the_pinned_revision(modules,
     (revision,) = build.served_by_problems("c", "http://localhost:8185", "rev0", "rev1")
     assert "reports database revision rev0" in revision
     assert len(build.served_by_problems("c", "http://127.0.0.1:8185", "rev1", None)) == 1
+
+
+_ATTESTATION = {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "sha256:" + "a" * 64,
+    "annotations": {"io.containerd.manifest.subject": "sha256:" + "7" * 64},
+    "artifactType": "application/vnd.docker.attestation.manifest.v1+json",
+}
+
+
+@pytest.mark.parametrize("platform_field", [True, False])  # saved from a pulled index, and from a loaded image
+def test_the_saved_file_names_one_tagged_platform_image(modules, platform_field):
+    image = modules.image
+    pinned = image.PLATFORMS["linux/amd64"]
+    entry = {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": pinned["manifest"]}
+    if platform_field:
+        entry["platform"] = {"architecture": "amd64", "os": "linux"}
+    index = {"manifests": [entry, _ATTESTATION]}
+    manifest = [{"Config": "blobs/sha256/" + pinned["config"].split(":")[1], "RepoTags": [image.VERSION_TAG]}]
+    assert image.saved_image(index, manifest) == {
+        "tag": image.VERSION_TAG, "manifest": pinned["manifest"], "config": pinned["config"]
+    }
+
+
+def test_an_untagged_or_index_only_save_is_not_one_image(modules):
+    image = modules.image
+    index_only = {"manifests": [{"mediaType": "application/vnd.oci.image.index.v1+json", "digest": "sha256:" + "5" * 64}]}
+    untagged = [{"Config": "blobs/sha256/" + "6" * 64, "RepoTags": None}]
+    assert image.saved_image(index_only, untagged) is None

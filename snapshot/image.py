@@ -181,6 +181,22 @@ def image_versions(env: dict[str, str]) -> dict[str, Any]:
     return json.loads(run(["python", "-c", code], env).stdout)
 
 
+def saved_image(index: dict[str, Any], manifest: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The one image a ``docker save`` file holds, from its ``index.json`` and ``manifest.json``: tag, manifest and
+    config digests. Attestation manifests are skipped; anything but exactly one tagged image gives ``None``."""
+    images = [
+        m for m in index.get("manifests") or []
+        if not m.get("artifactType") and "io.containerd.manifest.subject" not in (m.get("annotations") or {})
+    ]
+    if len(images) != 1 or len(manifest) != 1 or len(manifest[0].get("RepoTags") or []) != 1:
+        return None
+    return {
+        "tag": manifest[0]["RepoTags"][0],
+        "manifest": images[0]["digest"],
+        "config": "sha256:" + manifest[0]["Config"].rsplit("/", 1)[1],
+    }
+
+
 def save(out: Path) -> dict[str, Any]:
     """Save the pinned image for this host's platform, tagged ``VERSION_TAG``, gzipped, to ``out``.
 
@@ -204,20 +220,16 @@ def save(out: Path) -> dict[str, Any]:
     with tarfile.open(out) as tar:
         manifest = json.load(tar.extractfile("manifest.json"))
         index = json.load(tar.extractfile("index.json"))
-    images = [m for m in index["manifests"] if m.get("platform")]
-    config = "sha256:" + manifest[0]["Config"].rsplit("/", 1)[1] if len(manifest) == 1 else None
-    if (
-        len(manifest) != 1 or manifest[0].get("RepoTags") != [VERSION_TAG] or len(images) != 1
-        or images[0]["digest"] != pinned["manifest"] or config != pinned["config"]
-    ):
-        raise RuntimeError(f"{out.name} does not hold the pinned {platform} image tagged {VERSION_TAG}")
+    found = saved_image(index, manifest)
+    if found != {"tag": VERSION_TAG, "manifest": pinned["manifest"], "config": pinned["config"]}:
+        raise RuntimeError(f"{out.name} does not hold the pinned {platform} image tagged {VERSION_TAG}: {found}")
     digest = hashlib.sha256()
     with out.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             digest.update(chunk)
     return {
         "file": out.name, "bytes": out.stat().st_size, "sha256": digest.hexdigest(), "tag": VERSION_TAG,
-        "platform": platform, "manifest_digest": images[0]["digest"], "config_digest": config,
+        "platform": platform, "manifest_digest": found["manifest"], "config_digest": found["config"],
         "index_digest": PINS["tckdb"]["image_digest"],
     }
 
