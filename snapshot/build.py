@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +52,7 @@ import source_e2  # noqa: E402
 import source_pdep  # noqa: E402
 import use_case_export  # noqa: E402
 from common import ADAPTER_PACKAGES, Report, Session, adapter_package_paths  # noqa: E402
-from versions import installed_version_problems, refuse_mismatched_install  # noqa: E402
+from versions import installed_version_problems  # noqa: E402
 
 #: Generators run for the snapshot.
 EXPECTED_OUTPUTS = (
@@ -131,6 +132,36 @@ def adapter_problems(config: dict[str, Any]) -> list[str]:
     return []
 
 
+def submodule_commit() -> str:
+    return subprocess.run(["git", "-C", str(TCKDB_ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def pin_problems(config: dict[str, Any], pins: dict[str, Any] | None = None) -> list[str]:
+    """The ``tckdb/`` submodule and the tckdb-adapters checkout are at the commits ``pins.toml`` names."""
+    pins = pins or tomllib.loads((REPO_ROOT / "pins.toml").read_text())
+    problems = []
+    head = submodule_commit()
+    if head != pins["tckdb"]["commit"]:
+        problems.append(f"the tckdb/ submodule is at {head}, pins.toml names {pins['tckdb']['commit']}")
+    if config.get("adapter_path"):
+        commit = source_arc.checkout_commit(adapters_checkout(config))
+        if commit is not None and commit != pins["tckdb_adapters"]["commit"]:
+            problems.append(
+                f"the tckdb-adapters checkout is at {commit}, pins.toml names {pins['tckdb_adapters']['commit']}"
+            )
+    return problems
+
+
+def install_problems(package_paths: list[Path]) -> list[str]:
+    """Installed TCKDB versions that differ from the submodule's, in this environment alone and as the processes the
+    build starts see them (``package_paths`` on ``PYTHONPATH``, working directory ``tckdb/backend``)."""
+    env = export.subprocess_env({}, package_paths)
+    return installed_version_problems() + [
+        f"{line} (as the build's subprocesses see it)"
+        for line in installed_version_problems(env, TCKDB_ROOT / "backend")
+    ]
+
+
 def curation_problems(config: dict[str, Any]) -> list[str]:
     """The curation plan names only deposited ARC runs and states every text it writes."""
     plan = config.get("curation") or {}
@@ -162,6 +193,8 @@ def curation_problems(config: dict[str, Any]) -> list[str]:
 
 
 EDITS_OUTPUT = "approved_record_edits"
+#: SQLSTATE of the refusal the database's immutability trigger raises (``object_not_in_prerequisite_state``).
+REFUSAL_SQLSTATE = "55000"
 
 
 def edit_refusal_problems(document: dict[str, Any]) -> list[str]:
@@ -175,10 +208,9 @@ def edit_refusal_problems(document: dict[str, Any]) -> list[str]:
         out.append("no approved computed rate record of the use case was tried")
     if not controls:
         out.append("no rejected rate record was tried as the control")
-    sqlstate = document.get("expected_sqlstate_of_a_refusal")
     for row in approved:
         for attempt in row["attempts"]:
-            if not attempt.get("refused") or attempt.get("sqlstate") != sqlstate or "is immutable" not in (attempt.get("message") or ""):
+            if not attempt.get("refused") or attempt.get("sqlstate") != REFUSAL_SQLSTATE or "is immutable" not in (attempt.get("message") or ""):
                 out.append(f"{row['kinetics_ref']}: {attempt['attempt']} was not refused as immutable: {attempt}")
         if not row.get("a_after_rollback_equals_a_before"):
             out.append(f"{row['kinetics_ref']}: A changed")
@@ -186,6 +218,8 @@ def edit_refusal_problems(document: dict[str, Any]) -> list[str]:
         for attempt in row["attempts"]:
             if attempt.get("refused") or attempt.get("rows_affected") != 1:
                 out.append(f"control {row['kinetics_ref']}: {attempt['attempt']} was not accepted: {attempt}")
+        if not row.get("a_after_rollback_equals_a_before"):
+            out.append(f"control {row['kinetics_ref']}: A changed")
     return out
 
 
@@ -193,6 +227,7 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     """Return the problems in the whole config, enabled stub sources included."""
     problems = [f"unknown top-level key {k!r}" for k in sorted(set(config) - TOP_LEVEL_KEYS)]
     problems += adapter_problems(config)
+    problems += pin_problems(config)
     known = {name for name, _ in SOURCES}
     sources = config.get("sources") or {}
     problems += [f"unknown source {k!r}; known: {sorted(known)}" for k in sorted(set(sources) - known)]
@@ -410,7 +445,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--allow-nonempty", action="store_true", help="skip the empty-instance check (reruns only)")
     args = parser.parse_args(argv)
 
-    refuse_mismatched_install("the build")
     stray = outside_checkout()
     if stray:
         raise SystemExit(
@@ -429,6 +463,13 @@ def main(argv: list[str] | None = None) -> int:
     package_paths = [*PACKAGE_PATHS, *adapter_package_paths(adapters)]
     for _path in reversed(adapter_package_paths(adapters)):
         sys.path.insert(0, str(_path))
+    problems = install_problems(package_paths)
+    if problems:
+        raise SystemExit(
+            "the build refused: the installed TCKDB packages are not the submodule's, so a release manifest would "
+            "misstate its versions:\n  - " + "\n  - ".join(problems)
+            + "\ninstall the submodule's packages into this environment (README.md, 'Set up')"
+        )
     stray = outside_adapters(adapters)
     if stray:
         raise SystemExit(

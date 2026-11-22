@@ -211,11 +211,90 @@ def test_a_mismatched_install_is_refused(versions, monkeypatch):
     assert len(versions.installed_version_problems()) == 3
 
 
-def test_the_version_check_is_not_fooled_by_the_source_tree(versions):
+def _stale_egg_info(root: Path, version: str = "9.9.9") -> Path:
+    info = root / "tckdb_schemas.egg-info"
+    info.mkdir(parents=True)
+    (info / "PKG-INFO").write_text(f"Metadata-Version: 2.1\nName: tckdb-schemas\nVersion: {version}\n")
+    return root
+
+
+def test_the_version_check_reads_what_a_process_on_the_source_path_sees(versions, tmp_path):
     import os
 
-    egg_info_dirs = [str(p.parent) for p in versions.DISTRIBUTIONS.values()]
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(egg_info_dirs)}
-    isolated = versions.installed_versions()
-    on_path = versions.installed_versions(env, versions.TCKDB_ROOT / "backend")
-    assert sorted(isolated) == sorted(on_path) == sorted(versions.DISTRIBUTIONS)
+    declared = {name: versions.declared_version(path) for name, path in versions.DISTRIBUTIONS.items()}
+    source_dirs = [str(p.parent) for p in versions.DISTRIBUTIONS.values()]
+    backend = versions.TCKDB_ROOT / "backend"
+    assert versions.installed_versions() == declared
+    clean = {**os.environ, "PYTHONPATH": os.pathsep.join(source_dirs)}
+    assert versions.installed_versions(clean, backend) == declared
+    stale = _stale_egg_info(tmp_path / "stale")
+    shadowed = {**os.environ, "PYTHONPATH": os.pathsep.join([str(stale), *source_dirs])}
+    assert versions.installed_versions(shadowed, backend)["tckdb-schemas"] == "9.9.9"
+    assert versions.installed_version_problems(shadowed, backend) == [
+        f"tckdb-schemas: installed 9.9.9, the tckdb/ submodule declares {declared['tckdb-schemas']}"
+    ]
+    assert versions.installed_version_problems() == []
+
+
+def test_the_build_checks_the_view_of_the_processes_it_starts(build, tmp_path):
+    from conftest import ADAPTERS_ROOT
+
+    paths = [*build.PACKAGE_PATHS, *build.adapter_package_paths(ADAPTERS_ROOT)]
+    assert build.install_problems(paths) == []
+    stale = _stale_egg_info(tmp_path / "stale")
+    problems = build.install_problems([stale, *paths])
+    assert len(problems) == 1 and problems[0].startswith("tckdb-schemas: installed 9.9.9")
+
+
+def _pins(**commits):
+    import tomllib
+
+    pins = tomllib.loads((ROOT / "pins.toml").read_text())
+    for section, commit in commits.items():
+        pins[section]["commit"] = commit
+    return pins
+
+
+def test_the_submodule_and_adapters_commits_must_be_the_pinned_ones(build, tmp_path):
+    from conftest import ADAPTERS_ROOT
+
+    config = {"adapter_path": str(ADAPTERS_ROOT)}
+    assert build.pin_problems(config, _pins()) == []
+    assert build.pin_problems(config, _pins(tckdb="0" * 40)) == [
+        f"the tckdb/ submodule is at {build.submodule_commit()}, pins.toml names {'0' * 40}"
+    ]
+    other = _adapters_checkout(tmp_path / "other")
+    (problem,) = build.pin_problems({"adapter_path": str(other)}, _pins())
+    assert problem.startswith("the tckdb-adapters checkout is at ") and problem.endswith(_pins()["tckdb_adapters"]["commit"])
+    assert build.pin_problems({"adapter_path": str(other)}, _pins(tckdb_adapters=build.source_arc.checkout_commit(other))) == []
+
+
+def _edits_document(sqlstate: str = "55000", control_restored: bool = True) -> dict:
+    refused = {"refused": True, "sqlstate": sqlstate, "message": "accepted kinetics record k is immutable"}
+    return {
+        "approved_records": [
+            {
+                "kinetics_ref": "kin_a",
+                "a_after_rollback_equals_a_before": True,
+                "attempts": [{"attempt": "change A", **refused}, {"attempt": "delete", **refused}],
+            }
+        ],
+        "control_rejected_records": [
+            {
+                "kinetics_ref": "kin_b",
+                "a_after_rollback_equals_a_before": control_restored,
+                "attempts": [{"attempt": "change A", "refused": False, "rows_affected": 1}],
+            }
+        ],
+        "expected_sqlstate_of_a_refusal": sqlstate,
+    }
+
+
+def test_the_refusal_sqlstate_is_the_builds_not_the_documents(build):
+    assert build.edit_refusal_problems(_edits_document()) == []
+    problems = build.edit_refusal_problems(_edits_document(sqlstate="XX000"))
+    assert len(problems) == 2 and all("was not refused as immutable" in p for p in problems)
+
+
+def test_the_control_must_be_restored_after_its_rollback(build):
+    assert build.edit_refusal_problems(_edits_document(control_restored=False)) == ["control kin_b: A changed"]

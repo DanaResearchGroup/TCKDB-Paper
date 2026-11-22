@@ -1,13 +1,8 @@
-"""Installed TCKDB distributions against the versions the ``tckdb/`` submodule declares.
+"""Compare the installed ``tckdb-backend``, ``tckdb-client`` and ``tckdb-schemas`` with the versions the ``tckdb/``
+submodule declares.
 
-The API writes ``importlib.metadata`` versions of ``tckdb-backend`` and ``tckdb-schemas`` into every release manifest
-it publishes, so an environment holding another checkout's install would make the snapshot's manifest misstate the
-versions it was built with. ``build.py`` and ``instance.py up`` refuse to run in such an environment.
-
-The versions are read in a child of this interpreter, never in this process: the snapshot scripts put the submodule's
-source directories on ``sys.path``, where an editable install leaves ``*.egg-info`` directories that metadata lookups
-would find before the environment's own record. One child runs isolated (``-I``: the environment alone), and, when an
-environment is given, one runs the way the API process is started (its ``PYTHONPATH`` and working directory).
+The versions are read in a child of this interpreter: isolated (``-I``), or with a given environment and working
+directory.
 """
 
 from __future__ import annotations
