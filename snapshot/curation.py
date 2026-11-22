@@ -35,9 +35,9 @@ import httpx
 from common import TCKDB_ROOT, Report, Session
 from tckdb_client.errors import TCKDBHTTPError
 
-DEMONSTRATION = "Written by the paper-snapshot build script as a demonstration of the curation overlay; not an independent review."
+DEMONSTRATION = "Written by the paper build script as a demonstration of the curation overlay; not an independent review."
 APPROVAL_SUMMARY = (
-    "Approved by the paper-snapshot build script as a demonstration of the curation overlay. "
+    "Approved by the paper build script as a demonstration of the curation overlay. "
     "This is not an independent review; the depositor and the build script are the same project."
 )
 
@@ -320,7 +320,7 @@ def cut_release(curator: Curator, report: Report, cfg: dict[str, Any], env: dict
 
 PROBE_FILENAME = "approved_calculation_probe.log"
 PROBE_TEXT = (
-    "Written by the paper-snapshot build script to show that a file cannot be added to an approved calculation. "
+    "Written by the paper build script to show that a file cannot be added to an approved calculation. "
     "The server is expected to refuse it.\n"
 )
 
@@ -353,8 +353,15 @@ def grade_use_case(curator: Curator, report: Report, run: str) -> dict[str, Any]
 
 
 def _artifact_count(curator: Curator, calculation_ref: str) -> int:
-    body = curator.ok("GET", "/scientific/artifacts/search", params={"calculation_ref": calculation_ref, "limit": 200})
-    return len(body["records"])
+    """Every artifact of the calculation, read page by page."""
+    params: dict[str, Any] = {"calculation_ref": calculation_ref, "limit": 200}
+    count = 0
+    while True:
+        body = curator.ok("GET", "/scientific/artifacts/search", params=params)
+        count += len(body["records"])
+        if not body.get("next_cursor"):
+            return count
+        params = {**params, "cursor": body["next_cursor"]}
 
 
 def add_file_to_approved_calculation(session: Session, curator: Curator, report: Report, run: str) -> dict[str, Any]:

@@ -686,7 +686,7 @@ def approved_record_edits(session: Session) -> dict[str, Any]:
         ),
         "expected_sqlstate_of_a_refusal": REFUSAL_SQLSTATE,
         "note": (
-            "Each statement ran as the database owner inside a savepoint that was rolled back, so the snapshot is "
+            "Each statement ran as the database owner inside a savepoint that was rolled back, so the data are "
             "unchanged. A refusal comes from the database's own trigger on records that have ever been approved; the "
             "rejected records were never approved, so the same change to them is accepted and then rolled back."
         ),
