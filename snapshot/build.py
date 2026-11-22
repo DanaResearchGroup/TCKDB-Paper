@@ -32,11 +32,11 @@ TCKDB_ROOT = REPO_ROOT / "tckdb"
 PACKAGE_PATHS = [
     TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
     TCKDB_ROOT / "clients" / "python" / "src",
-    TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
     TCKDB_ROOT / "backend",
     REPO_ROOT,
 ]
-# This checkout's packages come first on the path.
+# This checkout's packages come first on the path. The adapters' are added from ``adapter_path`` once the sources file
+# is read.
 for _path in reversed([HERE, *PACKAGE_PATHS]):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
@@ -50,7 +50,7 @@ import source_chemkin  # noqa: E402
 import source_e2  # noqa: E402
 import source_pdep  # noqa: E402
 import use_case_export  # noqa: E402
-from common import Report, Session  # noqa: E402
+from common import ADAPTER_PACKAGES, Report, Session, adapter_package_paths  # noqa: E402
 
 #: Generators run for the snapshot.
 EXPECTED_OUTPUTS = (
@@ -79,7 +79,9 @@ EXPECTED_OUTPUTS = (
 
 #: Config keys holding local paths or host names; omitted from ``build_record.json``.
 PATH_KEYS = frozenset({"root", "fixture_dir", "adapter_path", "arc_path", "runs_root", "arkane_dir", "recorded_hosts"})
-TOP_LEVEL_KEYS = frozenset({"instance", "sources", "accounts", "expected_outputs", "curation", "chemkin_export"})
+TOP_LEVEL_KEYS = frozenset(
+    {"instance", "adapter_path", "sources", "accounts", "expected_outputs", "curation", "chemkin_export"}
+)
 
 #: Deposit order.
 SOURCES = (
@@ -94,6 +96,9 @@ def load_config(path: Path) -> dict[str, Any]:
     config = yaml.safe_load(path.read_text()) or {}
     config.setdefault("instance", {})
     config.setdefault("sources", {})
+    arc = (config["sources"] or {}).get("arc_runs")
+    if isinstance(arc, dict) and config.get("adapter_path") and not arc.get("adapter_path"):
+        arc["adapter_path"] = config["adapter_path"]  # the ARC adapter comes from the same checkout
     return config
 
 
@@ -101,6 +106,28 @@ def registered_generators() -> set[str]:
     """Generator names in the registry, read as text."""
     text = (REPO_ROOT / "tckdb_paper_generators" / "registry.py").read_text()
     return set(re.findall(r'^\s+"([a-z0-9_]+)":\s', text, flags=re.MULTILINE))
+
+
+def adapters_checkout(config: dict[str, Any]) -> Path:
+    return Path(str(config.get("adapter_path") or "")).expanduser()
+
+
+def adapter_problems(config: dict[str, Any]) -> list[str]:
+    """``adapter_path`` names a git checkout of tckdb-adapters, and the ARC source names the same one."""
+    if not config.get("adapter_path"):
+        return ["'adapter_path' (a git checkout of tckdb-adapters, for the CHEMKIN and QCSchema adapters) is required"]
+    root = adapters_checkout(config)
+    missing = [p for p in adapter_package_paths(root) if not (p / p.name).is_dir()]
+    if missing:
+        names = ", ".join(p.relative_to(root).as_posix() + "/" + p.name for p in missing)
+        return [f"'adapter_path' must be a tckdb-adapters checkout ({names} not found)"]
+    if source_arc.checkout_commit(root) is None:
+        return ["'adapter_path' must be a git checkout of tckdb-adapters, so its commit can be recorded"]
+    arc = (config.get("sources") or {}).get("arc_runs") or {}
+    if arc.get("enabled", True) and arc.get("adapter_path"):
+        if Path(str(arc["adapter_path"])).expanduser().resolve() != root.resolve():
+            return ["sources.arc_runs.adapter_path must name the same tckdb-adapters checkout as 'adapter_path'"]
+    return []
 
 
 def curation_problems(config: dict[str, Any]) -> list[str]:
@@ -164,6 +191,7 @@ def edit_refusal_problems(document: dict[str, Any]) -> list[str]:
 def validate_config(config: dict[str, Any]) -> list[str]:
     """Return the problems in the whole config, enabled stub sources included."""
     problems = [f"unknown top-level key {k!r}" for k in sorted(set(config) - TOP_LEVEL_KEYS)]
+    problems += adapter_problems(config)
     known = {name for name, _ in SOURCES}
     sources = config.get("sources") or {}
     problems += [f"unknown source {k!r}; known: {sorted(known)}" for k in sorted(set(sources) - known)]
@@ -216,7 +244,7 @@ def assert_empty(env: dict[str, str]) -> None:
         print(f"note: {counts['app_user']} account(s) already exist; they will be reused by name or the build will stop", file=sys.stderr)
 
 
-def git_commit() -> dict[str, Any]:
+def git_commit(adapters: Path) -> dict[str, Any]:
     def run(*argv: str) -> str:
         return subprocess.run(["git", *argv], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
 
@@ -224,40 +252,64 @@ def git_commit() -> dict[str, Any]:
         "commit": run("rev-parse", "HEAD"),
         "dirty_tracked_files": len(run("status", "--porcelain", "--untracked-files=no").splitlines()),
         "tckdb_commit": run("-C", "tckdb", "rev-parse", "HEAD"),
+        "tckdb_adapters_commit": source_arc.checkout_commit(adapters),
     }
 
 
-def package_versions() -> dict[str, Any]:
-    """Versions declared by this checkout's pyproject files, and whether the build imported them from here.
+def _declared_version(path: Path) -> str:
+    match = re.search(r'^version\s*=\s*"([^"]+)"', path.read_text(), flags=re.MULTILINE)
+    return match.group(1) if match else "unknown"
+
+
+def package_versions(adapters: Path) -> dict[str, Any]:
+    """Versions declared by the pyproject files of the submodule and the adapters checkout, and whether the build
+    imported the packages from there.
 
     Installed-distribution metadata can describe another checkout (an editable install made elsewhere), so the
     declared version comes from the files and the import location is checked separately.
     """
-    declared = {}
-    for name, path in (
-        ("tckdb-client", TCKDB_ROOT / "clients" / "python" / "pyproject.toml"),
-        ("tckdb-chemkin", TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin" / "pyproject.toml"),
-        ("tckdb-schemas", TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas" / "pyproject.toml"),
-    ):
-        match = re.search(r'^version\s*=\s*"([^"]+)"', path.read_text(), flags=re.MULTILINE)
-        declared[name] = match.group(1) if match else "unknown"
-    return {"declared_by_this_checkout": declared, "imported_from_this_checkout": not outside_checkout()}
+    declared = {
+        "tckdb-client": _declared_version(TCKDB_ROOT / "clients" / "python" / "pyproject.toml"),
+        "tckdb-schemas": _declared_version(TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas" / "pyproject.toml"),
+    }
+    adapter_declared = {
+        path.name.replace("_", "-"): _declared_version(path / "pyproject.toml")
+        for path in adapter_package_paths(adapters)
+    }
+    return {
+        "declared_by_this_checkout": declared,
+        "imported_from_this_checkout": not outside_checkout(),
+        "declared_by_the_adapters_checkout": adapter_declared,
+        "imported_from_the_adapters_checkout": not outside_adapters(adapters),
+    }
 
 
 def outside_checkout() -> dict[str, str]:
     """The TCKDB packages this process imported from outside the ``tckdb/`` submodule, by name."""
     import app
-    import tckdb_chemkin
     import tckdb_client
     import tckdb_schemas
 
     root = TCKDB_ROOT.resolve()
-    modules = {"app": app, "tckdb_chemkin": tckdb_chemkin, "tckdb_client": tckdb_client, "tckdb_schemas": tckdb_schemas}
+    modules = {"app": app, "tckdb_client": tckdb_client, "tckdb_schemas": tckdb_schemas}
     return {
         name: str(Path(module.__file__).resolve())
         for name, module in modules.items()
         if root not in Path(module.__file__).resolve().parents
     }
+
+
+def outside_adapters(adapters: Path) -> dict[str, str]:
+    """The adapter packages this process imports from outside the tckdb-adapters checkout, by name."""
+    import importlib
+
+    root = adapters.resolve()
+    found = {}
+    for name in ADAPTER_PACKAGES:
+        origin = Path(importlib.import_module(name).__file__).resolve()
+        if root not in origin.parents:
+            found[name] = str(origin)
+    return found
 
 
 def public_options(entry: dict[str, Any]) -> dict[str, Any]:
@@ -282,7 +334,7 @@ def private_values(config: dict[str, Any]) -> list[str]:
     is always included.
     """
     found: set[str] = {str(Path.home())}
-    for entry in (config.get("sources") or {}).values():
+    for entry in [{"adapter_path": config.get("adapter_path")}, *(config.get("sources") or {}).values()]:
         for key in PATH_KEYS:
             value = (entry or {}).get(key)
             for item in value if isinstance(value, list) else [value]:
@@ -370,6 +422,16 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(f"  - {problem}", file=sys.stderr)
         return 2
+    adapters = adapters_checkout(config)
+    package_paths = [*PACKAGE_PATHS, *adapter_package_paths(adapters)]
+    for _path in reversed(adapter_package_paths(adapters)):
+        sys.path.insert(0, str(_path))
+    stray = outside_adapters(adapters)
+    if stray:
+        raise SystemExit(
+            "these packages resolve outside the tckdb-adapters checkout named by 'adapter_path': "
+            + ", ".join(f"{name} ({path})" for name, path in sorted(stray.items()))
+        )
     instance = config["instance"]
     base_url = instance.get("api_url", "http://127.0.0.1:8010")
     out_dir = (args.out_dir or args.work_dir / "snapshot").resolve()
@@ -426,7 +488,7 @@ def main(argv: list[str] | None = None) -> int:
                           f"{len(approval['caught_error']['approved'])} approved")
                 if plan.get("release"):
                     approval["release"] = curation.cut_release(
-                        reviewer, report, plan["release"], export.subprocess_env(db_env, PACKAGE_PATHS)
+                        reviewer, report, plan["release"], export.subprocess_env(db_env, package_paths)
                     )
                     print(f"[curation] release {plan['release']['tag']} published")
                 if config.get("chemkin_export"):
@@ -447,7 +509,7 @@ def main(argv: list[str] | None = None) -> int:
                 reviewer.close()
 
         if not args.skip_export:
-            env = export.subprocess_env(db_env, PACKAGE_PATHS)
+            env = export.subprocess_env(db_env, package_paths)
             archive = out_dir / "tckdb.archive"
             print("[export] archive ...")
             written = export.create_archive(archive, env).strip().splitlines()
@@ -478,8 +540,8 @@ def main(argv: list[str] | None = None) -> int:
         report.write(out_dir / "build_report.json")
     record = {
         "snapshot": "TCKDB paper demonstration snapshot",
-        "source_commit": git_commit(),
-        "packages": package_versions(),
+        "source_commit": git_commit(adapters),
+        "packages": package_versions(adapters),
         "sources": source_records(config, report),
         "approval": approval,
         "exports": exports,

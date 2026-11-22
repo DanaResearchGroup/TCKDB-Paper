@@ -29,7 +29,6 @@ BACKEND = TCKDB_ROOT / "backend"
 PACKAGE_PATHS = [
     TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
     TCKDB_ROOT / "clients" / "python" / "src",
-    TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
     BACKEND,
 ]
 

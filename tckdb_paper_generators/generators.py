@@ -64,7 +64,6 @@ MECHANISM_FIXTURE_FILES = (
     "RMG_input.txt",
     "PROVENANCE.md",
 )
-CHEMKIN_ADAPTER = TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin"
 
 
 def _count(session: Session, model) -> int:
@@ -123,8 +122,8 @@ def corpus_counts(session: Session) -> dict[str, Any]:
 
 
 def _parse_fixture_mechanism():
-    if str(CHEMKIN_ADAPTER) not in sys.path:
-        sys.path.append(str(CHEMKIN_ADAPTER))
+    # The CHEMKIN adapter is not part of TCKDB: it comes from the tckdb-adapters checkout pinned in pins.toml, put on
+    # the path by the build (``adapter_path``) or by the tests (``TCKDB_ADAPTERS_ROOT``).
     from tckdb_chemkin.parser import parse_mechanism
     from tckdb_chemkin.transport import parse_transport_file
 

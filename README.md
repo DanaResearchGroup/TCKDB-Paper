@@ -9,7 +9,7 @@ TCKDB itself is the `tckdb/` git submodule, pinned to one commit (see `pins.toml
 
 ## Layout
 
-- `tckdb/`: the pinned TCKDB source (backend, schemas, Python client, CHEMKIN adapter, test fixtures).
+- `tckdb/`: the pinned TCKDB source (backend, schemas, Python client, test fixtures).
 - `pins.toml`: the TCKDB commit and its container image, the package versions at that commit, and the commits of
   `tckdb-adapters` and ARC the build uses.
 - `snapshot/`: the snapshot build (sources, curation, export, comparison, read-back). See `snapshot/README.md`.
@@ -17,7 +17,7 @@ TCKDB itself is the `tckdb/` git submodule, pinned to one commit (see `pins.toml
   registry for TCKDB's publication deposit tools: `--generators tckdb_paper_generators.registry:GENERATORS`
   with `--generator-root` set to the root of this repository.
 - `tests/`: unit tests for the generators and the snapshot scripts. `tests/conftest.py` loads TCKDB's database
-  fixtures from the submodule.
+  fixtures from the submodule and the CHEMKIN and QCSchema adapters from the tckdb-adapters checkout.
 
 ## Set up
 
@@ -37,19 +37,33 @@ python -m pip install -e "tckdb/backend[dev]"
 python -m pip install -e tckdb/clients/python
 ```
 
-`snapshot/build.py` and `python -m tckdb_paper_generators.chemkin_export --check` (which takes `--tckdb-root PATH`
-or `$TCKDB_ROOT` when the package is not beside `tckdb/`) stop if `app` (or
-`tckdb_client`, `tckdb_chemkin`, `tckdb_schemas`) is imported from outside `tckdb/`. A PostgreSQL server with the RDKit cartridge must be reachable; the image CI uses is
+The CHEMKIN and QCSchema adapters are not in TCKDB; they come from a git checkout of
+[tckdb-adapters](https://github.com/calvinp0/tckdb-adapters) at the commit in `pins.toml`, imported from source (no
+install). The tests find it through `TCKDB_ADAPTERS_ROOT`; the snapshot build through `adapter_path` in its sources
+file (`snapshot/README.md`).
+
+```bash
+git clone https://github.com/calvinp0/tckdb-adapters.git ../tckdb-adapters
+git -C ../tckdb-adapters checkout "$(python -c 'import tomllib; print(tomllib.load(open("pins.toml", "rb"))["tckdb_adapters"]["commit"])')"
+export TCKDB_ADAPTERS_ROOT="$PWD/../tckdb-adapters"
+```
+
+`snapshot/build.py` stops if `app`, `tckdb_client` or `tckdb_schemas` is imported from outside `tckdb/`, or an adapter
+from outside its `adapter_path`; `python -m tckdb_paper_generators.chemkin_export --check` (which takes
+`--tckdb-root PATH` or `$TCKDB_ROOT` when the package is not beside `tckdb/`) stops if `app` is. A PostgreSQL server
+with the RDKit cartridge must be reachable; the image CI uses is
 `informaticsmatters/rdkit-cartridge-debian:Release_2025_03_3`.
 
 ## Run the tests
 
 ```bash
 export DB_USER=tckdb DB_PASSWORD=tckdb DB_HOST=127.0.0.1 DB_PORT=5432
+export TCKDB_ADAPTERS_ROOT=/path/to/tckdb-adapters
 python -m pytest tests -n 2
 ```
 
-The tests create and drop their own `tckdb_test_*` databases.
+The tests create and drop their own `tckdb_test_*` databases. Without `TCKDB_ADAPTERS_ROOT` they refuse to start, and
+`tests/test_pins.py` checks that the checkout is at the pinned commit.
 
 ## Build and check the snapshot
 

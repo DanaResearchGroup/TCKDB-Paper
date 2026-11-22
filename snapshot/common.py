@@ -24,10 +24,17 @@ TCKDB_ROOT = REPO_ROOT / "tckdb"
 PACKAGE_ROOTS = (
     TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
     TCKDB_ROOT / "clients" / "python" / "src",
-    TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
     TCKDB_ROOT / "backend",
     REPO_ROOT,
 )
+
+#: The adapters the build imports from the tckdb-adapters checkout (``adapter_path`` in the sources file).
+ADAPTER_PACKAGES = ("tckdb_chemkin", "tckdb_qcschema")
+
+
+def adapter_package_paths(checkout: str | Path) -> list[Path]:
+    """Source roots of the CHEMKIN and QCSchema adapters in a tckdb-adapters checkout."""
+    return [Path(checkout).expanduser() / "adapters" / name for name in ADAPTER_PACKAGES]
 
 
 def api_base(url: str) -> str:
@@ -200,6 +207,7 @@ def slug(text: str) -> str:
 
 
 __all__ = [
+    "ADAPTER_PACKAGES",
     "PACKAGE_ROOTS",
     "REPO_ROOT",
     "TCKDB_ROOT",
@@ -207,6 +215,7 @@ __all__ = [
     "Session",
     "TCKDBError",
     "TCKDBHTTPError",
+    "adapter_package_paths",
     "api_base",
     "collect_response_warnings",
     "digest_files",

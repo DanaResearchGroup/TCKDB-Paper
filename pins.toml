@@ -14,12 +14,16 @@ image_version_tag_digest = "sha256:519a48331a634ea244a9b7346be3500faee086dd80487
 tckdb-client = "0.211.0"
 tckdb-schemas = "0.177.3"
 
-# Used by the ARC source of the snapshot build (not needed for the unit tests).
+# The CHEMKIN and QCSchema adapters (snapshot build and unit tests) and the ARC adapter (the build's ARC source).
+# Its packages declare tckdb-client >=0.210,<0.211; they are imported from source beside the submodule's 0.211.0,
+# which adds to 0.210 and changes nothing in it.
 [tckdb_adapters]
 repository = "https://github.com/calvinp0/tckdb-adapters.git"
-commit = "63ca2c38702fd74656eca48615e5ce9915c44cc4"
-tckdb-arc = "0.15.7"
-tckdb-core = "0.5.7"
+commit = "bf2d37cefe557d0965ab25521ab00813a15fe8da"
+tckdb-arc = "0.15.21"
+tckdb-chemkin = "0.7.9"
+tckdb-core = "0.5.20"
+tckdb-qcschema = "0.9.11"
 
 [arc]
 repository = "https://github.com/ReactionMechanismGenerator/ARC.git"

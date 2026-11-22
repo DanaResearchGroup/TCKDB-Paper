@@ -33,7 +33,6 @@ for _path in reversed(
         HERE,
         TCKDB_ROOT / "schemas" / "python" / "tckdb-schemas",
         TCKDB_ROOT / "clients" / "python" / "src",
-        TCKDB_ROOT / "clients" / "python" / "adapters" / "chemkin",
         TCKDB_ROOT / "backend",
     ]
 ):
@@ -43,7 +42,7 @@ for _path in reversed(
 import yaml  # noqa: E402
 
 import source_e2  # noqa: E402
-from common import Session  # noqa: E402
+from common import Session, adapter_package_paths  # noqa: E402
 
 
 def check_e2(client, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -187,7 +186,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-url", required=True)
     parser.add_argument("--sources", type=Path, required=True)
     args = parser.parse_args(argv)
-    sources = (yaml.safe_load(args.sources.read_text()) or {}).get("sources") or {}
+    config = yaml.safe_load(args.sources.read_text()) or {}
+    sources = config.get("sources") or {}
+    if config.get("adapter_path"):  # the CHEMKIN check parses the model with the adapter of the build
+        for _path in reversed(adapter_package_paths(config["adapter_path"])):
+            sys.path.insert(0, str(_path))
 
     session = Session(args.api_url)
     session.register_depositor("snapshot_reader", "snapshot-reader-pass", "reader@snapshot.invalid", "Snapshot read-back")

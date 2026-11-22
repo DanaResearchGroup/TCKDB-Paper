@@ -51,7 +51,7 @@ tool the build calls (`tckdb_archive.py`, `bootstrap_admin.py`, `pdep_ingestion`
     title carries subscript markup).
 - **Source 4, formic acid pyrolysis and oxidation model** (`source_chemkin.py`): Wu and Grinberg Dana,
   *ACS Omega* 2026, 11, 6371 (CC BY 4.0), 123 species and 3002 reactions, deposited unmodified.
-  - Route: the CHEMKIN adapter (`tckdb/clients/python/adapters/chemkin`), which posts to `/uploads/thermo` and
+  - Route: the CHEMKIN adapter (`tckdb_chemkin` in `tckdb-adapters`, from `adapter_path`), which posts to `/uploads/thermo` and
     `/uploads/kinetics`.
   - Where to get it: the files are in the submodule, `tckdb/backend/tests/integration/fixtures/rmg_formic_acid_wu2026/`.
   - The adapter's own import warnings (wrong `DUPLICATE` flags) are kept in the report; the importer never
@@ -70,7 +70,7 @@ docker compose up -d db seaweedfs          # or any S3-compatible store at S3_EN
 make up                                    # migrations on tckdb_dev (an empty instance)
 RATE_LIMIT_ENABLED=false make api          # in a second terminal
 cd ..
-cp snapshot/sources.example.yml my_sources.yml   # set the E2 root
+cp snapshot/sources.example.yml my_sources.yml   # set the E2 root and adapter_path
 python snapshot/build.py --sources my_sources.yml --out-dir snapshot_out
 ```
 
@@ -89,7 +89,36 @@ python snapshot/instance.py down --name a --drop
 
 An editable install can point at another TCKDB checkout. `build.py` puts the submodule's packages and this
 repository's root first on its import path and on the `PYTHONPATH` of the processes it starts, and stops if `app`,
-`tckdb_client`, `tckdb_chemkin` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets only the submodule's package paths on the `PYTHONPATH` of the API process it starts; it does not check the imports. `build_record.json` records that the imports came from the submodule.
+`tckdb_client` or `tckdb_schemas` is imported from outside `tckdb/`. `instance.py` sets only the submodule's package
+paths on the `PYTHONPATH` of the API process it starts; it does not check the imports. `build_record.json` records
+that the imports came from the submodule.
+
+### The tckdb-adapters checkout
+
+The CHEMKIN and QCSchema adapters are not part of TCKDB. They come from a git checkout of
+[tckdb-adapters](https://github.com/calvinp0/tckdb-adapters) at the commit in `pins.toml` (`[tckdb_adapters]`), named
+by the top-level `adapter_path` of the sources file, the same way Source 2 names the checkout of its ARC adapter:
+
+```bash
+git clone https://github.com/calvinp0/tckdb-adapters.git /path/to/tckdb-adapters
+git -C /path/to/tckdb-adapters checkout <commit from pins.toml>
+```
+
+```yaml
+adapter_path: /path/to/tckdb-adapters
+sources:
+  arc_runs:
+    adapter_path: /path/to/tckdb-adapters   # optional; when given, the same checkout
+```
+
+The build refuses a sources file whose `adapter_path` is missing, is not the top level of a git checkout holding
+`adapters/tckdb_chemkin` and `adapters/tckdb_qcschema`, or differs from `arc_runs.adapter_path`. It puts the two
+adapters' directories first on its import path and on the `PYTHONPATH` of the processes it starts (the generators, the
+custody check, the CHEMKIN export check), and stops if either is imported from anywhere else. `build_record.json`
+records the checkout's commit (`source_commit.tckdb_adapters_commit`) and the versions its pyproject files declare
+(`packages.declared_by_the_adapters_checkout`); the path itself is never written. `readback.py` reads `adapter_path`
+from the same sources file. The unit tests take the checkout from `TCKDB_ADAPTERS_ROOT` instead (top-level
+`README.md`).
 
 ## What comes out
 

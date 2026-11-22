@@ -91,6 +91,56 @@ def test_a_package_outside_the_submodule_is_reported(build, monkeypatch, tmp_pat
     assert build.outside_checkout() == {}
 
 
+def _adapters_checkout(path: Path, *, git: bool = True) -> Path:
+    for name in ("tckdb_chemkin", "tckdb_qcschema"):
+        (path / "adapters" / name / name).mkdir(parents=True)
+    if git:
+        git_cmd = ["git", "-C", str(path), "-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+        subprocess.run([*git_cmd, "init", "-q"], check=True)
+        subprocess.run([*git_cmd, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+    return path
+
+
+def test_the_adapters_checkout_is_required_and_must_be_recordable(build, tmp_path):
+    assert "'adapter_path'" in build.adapter_problems({"sources": {}})[0]
+    assert "tckdb_chemkin" in build.adapter_problems({"adapter_path": str(tmp_path / "empty")})[0]
+    plain = _adapters_checkout(tmp_path / "plain", git=False)
+    assert "git checkout" in build.adapter_problems({"adapter_path": str(plain)})[0]
+    checkout = _adapters_checkout(tmp_path / "checkout")
+    assert build.adapter_problems({"adapter_path": str(checkout)}) == []
+
+
+def test_the_arc_source_must_use_the_same_adapters_checkout(build, tmp_path):
+    checkout = _adapters_checkout(tmp_path / "checkout")
+    other = _adapters_checkout(tmp_path / "other")
+    same = {"adapter_path": str(checkout), "sources": {"arc_runs": {"adapter_path": str(checkout)}}}
+    assert build.adapter_problems(same) == []
+    differ = {"adapter_path": str(checkout), "sources": {"arc_runs": {"adapter_path": str(other)}}}
+    assert "same tckdb-adapters checkout" in build.adapter_problems(differ)[0]
+
+
+def test_the_arc_source_defaults_to_the_adapters_checkout(build, tmp_path):
+    sources = tmp_path / "sources.yml"
+    sources.write_text("adapter_path: /a/tckdb-adapters\nsources:\n  arc_runs: {enabled: true}\n")
+    assert build.load_config(sources)["sources"]["arc_runs"]["adapter_path"] == "/a/tckdb-adapters"
+    sources.write_text("adapter_path: /a\nsources:\n  arc_runs: {adapter_path: /b}\n")
+    assert build.load_config(sources)["sources"]["arc_runs"]["adapter_path"] == "/b"
+
+
+def test_the_adapters_are_imported_from_the_named_checkout(build, tmp_path):
+    from conftest import ADAPTERS_ROOT
+
+    assert build.outside_adapters(ADAPTERS_ROOT) == {}
+    elsewhere = build.outside_adapters(tmp_path)
+    assert sorted(elsewhere) == ["tckdb_chemkin", "tckdb_qcschema"]
+
+
+def test_the_adapters_checkout_path_is_private(build, tmp_path):
+    config = {"adapter_path": str(tmp_path / "tckdb-adapters"), "sources": {}}
+    assert str(tmp_path / "tckdb-adapters") in build.private_values(config)
+    assert build.leaks({"a.json": f"{tmp_path}/tckdb-adapters/adapters", "b.json": "clean"}, config) == ["a.json"]
+
+
 def test_expanded_paths_and_the_home_directory_are_private(build, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     config = {"sources": {"e2": {"root": "~/data/E2"}, "chemkin": {"fixture_dir": "tckdb/fixtures"}}}

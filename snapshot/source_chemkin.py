@@ -1,9 +1,9 @@
 """Source 4: the formic acid RMG model, deposited unmodified through the CHEMKIN adapter.
 
-The adapter parses ``chem_annotated.inp``, resolves species through ``species_dictionary.txt`` and posts thermo and
-kinetics to ``/uploads/thermo`` and ``/uploads/kinetics``. This module configures that run and records every response
-warning, refusal and import warning (the adapter reports wrong ``DUPLICATE`` flags and does not repair them). The model
-has no transport file, so no transport is deposited.
+The adapter (``tckdb_chemkin`` in tckdb-adapters) parses ``chem_annotated.inp``, resolves species through
+``species_dictionary.txt`` and posts thermo and kinetics to ``/uploads/thermo`` and ``/uploads/kinetics``. This module
+configures that run and records every response warning, refusal and import warning (the adapter reports wrong
+``DUPLICATE`` flags and does not repair them). The model has no transport file, so no transport is deposited.
 """
 
 from __future__ import annotations
@@ -12,12 +12,6 @@ import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
-
-from tckdb_chemkin.identity import IdentityResolver, parse_species_dictionary
-from tckdb_chemkin.normalizer import normalize_mechanism
-from tckdb_chemkin.parser import parse_mechanism
-from tckdb_chemkin.payloads import ImportConfig, build_all_payloads
-from tckdb_chemkin.uploader import upload_payloads
 
 from common import REPO_ROOT, Report, Session, collect_response_warnings, digest_files
 
@@ -132,6 +126,13 @@ def _duplicate_code(message: str) -> str:
 
 
 def deposit(session: Session, cfg: dict[str, Any], report: Report, work_dir: Path) -> None:
+    # The adapter comes from the tckdb-adapters checkout the build puts on the path (``adapter_path``).
+    from tckdb_chemkin.identity import IdentityResolver, parse_species_dictionary
+    from tckdb_chemkin.normalizer import normalize_mechanism
+    from tckdb_chemkin.parser import parse_mechanism
+    from tckdb_chemkin.payloads import ImportConfig, build_all_payloads
+    from tckdb_chemkin.uploader import upload_payloads
+
     fixture = _fixture(cfg)
     mechanism_file = cfg.get("mechanism_file", "chem_annotated.inp")
     dictionary_file = cfg.get("species_dictionary", "species_dictionary.txt")

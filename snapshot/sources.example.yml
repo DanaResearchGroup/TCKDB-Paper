@@ -23,6 +23,11 @@ instance:
     secret_key: tckdb_secret
     bucket: tckdb-artifacts
 
+# A git checkout of tckdb-adapters at the commit in pins.toml. The CHEMKIN adapter (Source 4 and the generators) and the
+# QCSchema adapter are imported from its adapters/ directory; Source 2's adapter_path, when given, must be the same
+# checkout. Its commit is recorded in build_record.json.
+adapter_path: /path/to/tckdb-adapters
+
 sources:
   # Source 1: the E2 conformer study, deposited with the client builders.
   # The directory must hold raw_outputs/manifest_union.json, raw_outputs/tasks.txt and
@@ -34,7 +39,7 @@ sources:
     levels: [b3lyp_d3bj, wb97xd, gfn2]
 
   # Source 4: the formic acid RMG model (Wu and Grinberg Dana, ACS Omega 2026), unmodified, through the CHEMKIN
-  # adapter. The files are in the tckdb/ submodule; the path is relative to this repository's root.
+  # adapter of adapter_path. The files are in the tckdb/ submodule; the path is relative to this repository's root.
   chemkin_formic_acid:
     enabled: true
     fixture_dir: tckdb/backend/tests/integration/fixtures/rmg_formic_acid_wu2026
