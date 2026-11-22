@@ -190,3 +190,17 @@ def test_main_exits_zero_for_a_clean_pair_and_non_zero_for_a_release_hash_proble
     bad = _build(tmp_path, "bad", artifact, manifest)
     assert compare.main([str(one), str(bad)]) == 1
     assert "RESULT: DIFFERENCES" in capsys.readouterr().out
+
+
+def test_a_regeneration_without_the_chemkin_export_passes_only_when_told(compare, tmp_path, capsys):
+    one = _build(tmp_path, "one", *_release([{"record_ref": "a", "n": 1}]))
+    two = _build(tmp_path, "two", *_release([{"record_ref": "a", "n": 1}]))
+    for build in (one, two):
+        (build / "expected_outputs" / "use_case_chemkin_export.json").write_text('{"export": "found"}')
+    (one / "chemkin_export").mkdir()
+    (one / "chemkin_export" / "chem.inp").write_text("ELEMENTS\n")
+    assert compare.main([str(one), str(two)]) == 1
+    assert "chemkin_export/ is absent" in capsys.readouterr().out
+    assert compare.main([str(one), str(two), "--without-chemkin-export"]) == 0
+    out = capsys.readouterr().out
+    assert "(not compared)" in out and "RESULT: no difference" in out

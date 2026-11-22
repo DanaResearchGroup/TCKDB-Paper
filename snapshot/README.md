@@ -65,17 +65,23 @@ names, by digest; every TCKDB tool the build calls (`tckdb_archive.py`, `bootstr
 | The host (the environment of the top-level `README.md`) | `build.py` and the deposit clients, which talk to the API over HTTP only: the client builders (Source 1), the CHEMKIN adapter (Source 4), the posts of Sources 2 and 3, the curator's HTTP calls and the CHEMKIN export request |
 | The ARC Python (`adapter_command`) | the ARC adapter (Source 2), over HTTP |
 
-Every container is started from `laxzal/tckdb-api@<image_digest>`. This repository is mounted read-only at `/paper` and
+Every container is started from the pinned image: `laxzal/tckdb-api@<image_digest>` when that digest is present
+locally, else `laxzal/tckdb-api:<version>` when it is present and its digest is the manifest or config digest
+`pins.toml` lists for this host's platform (what `docker load` of the saved file gives); only when neither is present is
+the digest pulled. `python3 snapshot/image.py` prints the reference. This repository is mounted read-only at `/paper` and
 put on the image's `PYTHONPATH` (for `tckdb_paper_generators` and the two scripts above), with the CHEMKIN and QCSchema
 adapters of the tckdb-adapters checkout (mounted read-only at `/adapters`). Nothing of the `tckdb/` submodule is put on
 the image's path: the backend, `tckdb-schemas` and Cantera are the image's own. The only writable mount is the
 directory a step writes (the archive, `expected_outputs/`).
 
-Before it deposits anything the build checks that the API container runs the pinned digest (`docker inspect`;
-`instance.container` in the sources file, else the name `instance.py` gives it), and it checks again when it writes
-`build_record.json`, which records the digest (`tckdb_image.api_container_image_digest`) and the versions inside the
-image (`tckdb_image.inside`). It then saves the image, gzipped, as `tckdb-api-<version>.tar.gz` in the output, with its
-size and SHA-256 in `build_record.json` (`exports.image`).
+Before it deposits anything the build checks that the API container (`instance.container` in the sources file, else
+the name `instance.py` gives it) runs a pinned image (`docker inspect`), that it is the server at `instance.api_url`
+(a loopback address, the container's `--port`, and the database revision `/api/v1/status` reports equal to the image's
+migration head), and it checks the image again when it writes `build_record.json`, which records what ran
+(`tckdb_image.api_container_image`: id, digests, platform and which pinned identity it is) and the versions inside the
+image (`tckdb_image.inside`). It then saves the image for the host's platform, tagged `laxzal/tckdb-api:<version>`,
+gzipped, as `tckdb-api-<version>.tar.gz` in the output; `build_record.json` (`exports.image`) has its size, SHA-256,
+platform, manifest and config digests, read back from the file and checked against `pins.toml`.
 
 ## Run it
 
@@ -142,11 +148,13 @@ In `--out-dir`:
 - `build_record.json`: source commit (this repository's and the submodule's), package versions, the approval statement, archive digest, and per source
   its options and a count and digest of the files it read. No path on the builder's machine is written to it.
 
-Generators run for the snapshot: `corpus_counts`, `conformer_basins`, `calculation_evidence`, `deposit_warnings`,
-`hessian_reanalysis`, `thermo_selection_outcomes`, `structure_selection_outcomes`, `mechanism_roundtrip_counts`,
-`mechanism_fixture_provenance`, `selected_thermo_by_species`, `candidate_lineage`, `transition_state_evidence`,
-`use_case_ch4_oh`, `ch3_enthalpy_of_formation`, `network_n2h3`, `chemkin_reconciliation`, `species_thermo_sources`,
-`use_case_chemkin_export`, `caught_error` and `dataset_release`.
+Generators run for the snapshot (`EXPECTED_OUTPUTS` in `build.py`, 21): `corpus_counts`, `conformer_basins`,
+`calculation_evidence`, `deposit_warnings`, `hessian_reanalysis`, `thermo_selection_outcomes`,
+`structure_selection_outcomes`, `mechanism_roundtrip_counts`, `mechanism_fixture_provenance`,
+`selected_thermo_by_species`, `candidate_lineage`, `transition_state_evidence`, `use_case_ch4_oh`,
+`approved_record_edits`, `use_case_chemkin_export`, `ch3_enthalpy_of_formation`, `network_n2h3`,
+`chemkin_reconciliation`, `species_thermo_sources`, `caught_error` and `dataset_release`. The registry's
+`qcschema_interchange` is not run: it needs `qcelemental`, which the TCKDB image does not ship.
 
 - `use_case_ch4_oh`: the computed rate coefficient of C + [OH] => O + [CH3], k(300 K) from its stored fit, the
   transition state's imaginary frequency and IRC evidence, the levels of the cited energies, and the deposit's warnings.
@@ -249,8 +257,9 @@ python snapshot/instance.py restore --name c --archive snapshot_out/tckdb.archiv
 python snapshot/readback.py --api-url http://127.0.0.1:8103 --sources my_sources.yml
 ```
 
-`readback.py` runs on the host in the environment of the top-level `README.md`: it evaluates the N2H3 Chebyshev fits
-with TCKDB's own function, imported from the submodule.
+`readback.py` runs on the host in the environment of the top-level `README.md`, talking to the instance over HTTP; the
+N2H3 request and the expected Chebyshev evaluations are built in the pinned image (`pdep_payload.py`), so it imports
+nothing of TCKDB's backend.
 
 `compare.py` does not expect identical bytes: public refs are random and timestamps differ. It masks public refs in
 the expected outputs and, for the archive, timestamps, refs and the bucket name in artifact URIs. It re-sorts
